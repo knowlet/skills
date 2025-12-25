@@ -1,30 +1,101 @@
 ---
 name: reactor-sub-agent
-description: 專責處理 RIF 類型的需求，根據 analyze-frame 的 YAML 規格設計/審查事件反應、整合與非同步流程。支援 Java、TypeScript、Go 多語言。確保冪等性、可恢復性與重試機制。
+description: 專責處理 RIF (Required Behavior Frame) 類型的需求。讀取規格目錄結構，生成/審查 Event Handler 設計與實作。支援冪等性、重試、死信佇列。
 ---
 
 # Reactor Sub-agent Skill
 
 ## 觸發時機
-- analyze-frame 判定 frame_type=RIF 時
-- 需要新增/審查事件處理器、訊息消費者、整合流程時
-- 設計重試、死信、冪等性與監控機制時
-- saga-orchestrator 分派事件處理任務時
+
+- analyze-frame 判定 frame_type=RequiredBehaviorFrame 時
+- 需要建立/修改 Event Handler、訊息處理器時
+- saga-orchestrator 分派 Reactor 類型任務時
 
 ## 核心任務
-1. 解析 YAML 規格中的事件來源、觸發條件與期望反應
-2. 設計/審查事件處理流程、整合介面、錯誤處理與補償策略
-3. 確保處理具備冪等性、可觀測性與恢復機制
+
+1. 讀取規格目錄結構（frame.yaml, machine/）
+2. 設計/驗證 Event Handler 與反應式流程
+3. 確保冪等性、重試策略、死信佇列處理
+4. 產出程式碼骨架或審查既有實作
+
+---
+
+## 規格目錄結構
+
+```
+docs/specs/{feature-name}/
+├── frame.yaml                 # 讀取 frame_concerns
+├── requirements/              # 讀取反應需求
+│   └── req-{n}-{feature}.yaml
+├── machine/                   # 讀取 Reactor 規格
+│   └── reactor.yaml           # Event Handler 規格
+└── cross-context/             # 若需觸發其他 BC
+    └── {context}.yaml
+```
+
+---
+
+## machine/reactor.yaml 格式
+
+```yaml
+# docs/specs/{feature-name}/machine/reactor.yaml
+reactor:
+  name: "{EventName}Handler"
+  
+  # 監聽的事件
+  subscribes_to:
+    - event: "{DomainEvent}"
+      source_context: "{SourceBC}"
+      subscription_type: "durable"  # | ephemeral
+  
+  # 反應動作
+  actions:
+    - name: "{ActionName}"
+      type: "command"  # | query | notification | integration
+      target: "{TargetUseCase or Service}"
+  
+  # 冪等性設計
+  idempotency:
+    enabled: true
+    key_source: "event.id"  # 用於判斷是否已處理
+    storage: "database"     # | redis | in-memory
+    ttl: "7d"
+  
+  # 重試策略
+  retry:
+    max_attempts: 3
+    backoff:
+      type: "exponential"  # | fixed | linear
+      initial_delay: "1s"
+      max_delay: "30s"
+      multiplier: 2
+    retryable_errors:
+      - "NetworkError"
+      - "TimeoutError"
+    non_retryable_errors:
+      - "ValidationError"
+      - "UnauthorizedError"
+  
+  # 死信佇列
+  dead_letter:
+    enabled: true
+    queue: "dlq.{feature-name}"
+    alert_threshold: 10
+  
+  # 交易邊界
+  transaction:
+    type: "eventual"  # | immediate
+    consistency: "at-least-once"  # | exactly-once | at-most-once
+```
+
+---
 
 ## Claude Code Sub-agent 整合
 
-本 Skill 可作為 `runSubagent` 的任務目標：
-
 ```
 saga-orchestrator → runSubagent → reactor-sub-agent
-                                    ├── 讀取 coding-standards
-                                    ├── 設計冪等策略
-                                    ├── 設計重試/死信機制
+                                    ├── 讀取規格目錄
+                                    ├── 套用 coding-standards
                                     └── 輸出 Event Handler 代碼
 ```
 
@@ -33,284 +104,460 @@ saga-orchestrator → runSubagent → reactor-sub-agent
 ```yaml
 task:
   type: "reactor"
-  spec_file: "docs/specs/order-created-handler.yaml"
-  language: "typescript"  # java | typescript | go
-  trigger_event: "OrderCreated"
-  output_path: "src/application/handlers/"
+  spec_dir: "docs/specs/on-workflow-created/"
+  language: "typescript"
+  output_paths:
+    handlers: "src/application/event-handlers/"
 ```
-
-## 工作流程
-1. **解析規格**：讀取 metadata.frame_type=RIF；提取 problem_statement、acceptance_criteria、technical_constraints。
-2. **處理器設計**：
-   - 定義 Event Handler / Consumer 介面與輸入模型
-   - 明確輸入驗證、去重/冪等策略（idempotency key、去重表、樂觀鎖）
-   - 規劃重試/退避、死信佇列、告警
-3. **整合與副作用**：
-   - 外部呼叫的適配層 (Adapter) 與超時/熔斷/隔離策略
-   - 資料一致性策略（Outbox、Transaction Log、批次確認）
-4. **產出**：
-   - Handler 骨架與介面定義
-   - 配置與運維要點（佇列/Topic、重試、死信、監控指標）
-   - 驗收測試案例草稿（事件重放、重試、失敗分支）
 
 ---
 
 ## TypeScript 範例
 
+### Event Handler with Full Features
+
 ```typescript
-// application/handlers/OrderCreatedHandler.ts
+// src/application/event-handlers/WorkflowCreatedHandler.ts
+// Generated from: docs/specs/on-workflow-created/machine/reactor.yaml
 
-import { EventHandler } from '../ports/EventHandler';
-import { IdempotencyService } from '../ports/IdempotencyService';
+import { EventHandler, OnEvent } from '@/infrastructure/events/EventHandler';
+import { IdempotencyService } from '@/infrastructure/idempotency/IdempotencyService';
+import { RetryPolicy } from '@/infrastructure/retry/RetryPolicy';
+import { DeadLetterQueue } from '@/infrastructure/dlq/DeadLetterQueue';
+import { NotificationService } from '@/domain/services/NotificationService';
 
-export interface OrderCreatedEvent {
-  readonly eventId: string;
-  readonly orderId: string;
-  readonly customerId: string;
-  readonly items: readonly OrderItemSnapshot[];
-  readonly totalAmount: number;
-  readonly occurredAt: Date;
+// ===== Event Type (from subscribes_to) =====
+
+export interface WorkflowCreatedEvent {
+  readonly id: string;           // Event ID for idempotency
+  readonly workflowId: string;
+  readonly boardId: string;
+  readonly name: string;
+  readonly createdBy: string;
+  readonly createdAt: Date;
 }
 
-export class OrderCreatedHandler implements EventHandler<OrderCreatedEvent> {
+// ===== Handler Configuration (from reactor.yaml) =====
+
+const RETRY_CONFIG = {
+  maxAttempts: 3,
+  backoff: {
+    type: 'exponential' as const,
+    initialDelay: 1000,
+    maxDelay: 30000,
+    multiplier: 2,
+  },
+  retryableErrors: ['NetworkError', 'TimeoutError'],
+};
+
+const IDEMPOTENCY_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ===== Event Handler =====
+
+export class WorkflowCreatedHandler implements EventHandler<WorkflowCreatedEvent> {
   constructor(
-    private readonly inventoryService: InventoryService,
-    private readonly notificationService: NotificationService,
     private readonly idempotencyService: IdempotencyService,
-    private readonly logger: Logger,
+    private readonly retryPolicy: RetryPolicy,
+    private readonly deadLetterQueue: DeadLetterQueue,
+    private readonly notificationService: NotificationService,
+    private readonly analyticsService: AnalyticsService,
   ) {}
 
-  async handle(event: OrderCreatedEvent): Promise<void> {
-    const idempotencyKey = `order-created:${event.eventId}`;
-
-    // ===== 冪等性檢查 =====
-    if (await this.idempotencyService.isDuplicate(idempotencyKey)) {
-      this.logger.info('Duplicate event, skipping', { eventId: event.eventId });
-      return;
-    }
+  @OnEvent('WorkflowCreatedEvent')
+  async handle(event: WorkflowCreatedEvent): Promise<void> {
+    const idempotencyKey = `workflow-created:${event.id}`;
 
     try {
-      // ===== 處理邏輯 =====
-      
-      // 1. 預留庫存
-      await this.inventoryService.reserve({
-        orderId: event.orderId,
-        items: event.items,
-      });
+      // ===== Idempotency Check (from reactor.yaml#idempotency) =====
+      const alreadyProcessed = await this.idempotencyService.check(idempotencyKey);
+      if (alreadyProcessed) {
+        console.log(`Event ${event.id} already processed, skipping`);
+        return;
+      }
 
-      // 2. 發送通知
-      await this.notificationService.sendOrderConfirmation({
-        customerId: event.customerId,
-        orderId: event.orderId,
-        totalAmount: event.totalAmount,
-      });
+      // ===== Execute with Retry (from reactor.yaml#retry) =====
+      await this.retryPolicy.execute(
+        async () => {
+          await this.processEvent(event);
+        },
+        RETRY_CONFIG,
+      );
 
-      // ===== 標記處理完成 =====
-      await this.idempotencyService.markProcessed(idempotencyKey);
+      // ===== Mark as Processed =====
+      await this.idempotencyService.markProcessed(idempotencyKey, IDEMPOTENCY_TTL);
 
     } catch (error) {
-      this.logger.error('Failed to handle OrderCreated', { 
-        eventId: event.eventId, 
-        error 
-      });
-      throw error; // 讓 retry 機制接手
+      // ===== Dead Letter Queue (from reactor.yaml#dead_letter) =====
+      if (this.isNonRetryable(error)) {
+        await this.deadLetterQueue.send({
+          event,
+          error: error.message,
+          timestamp: new Date(),
+          reason: 'non-retryable-error',
+        });
+        return;
+      }
+
+      // Re-throw for retry infrastructure
+      throw error;
     }
   }
-}
 
-// 搭配 Retry 與 Dead Letter 的 Consumer
-export class OrderEventsConsumer {
-  constructor(
-    private readonly messageQueue: MessageQueue,
-    private readonly orderCreatedHandler: OrderCreatedHandler,
-    private readonly deadLetterQueue: DeadLetterQueue,
-    private readonly logger: Logger,
-  ) {}
+  private async processEvent(event: WorkflowCreatedEvent): Promise<void> {
+    // ===== Actions (from reactor.yaml#actions) =====
+    
+    // Action 1: Send notification to board members
+    await this.notificationService.notifyBoardMembers({
+      boardId: event.boardId,
+      message: `New workflow "${event.name}" created`,
+      createdBy: event.createdBy,
+    });
 
-  async start(): Promise<void> {
-    await this.messageQueue.subscribe('order.created', async (message) => {
-      const maxRetries = 3;
-      let attempt = 0;
-
-      while (attempt < maxRetries) {
-        try {
-          const event = this.parseEvent(message);
-          await this.orderCreatedHandler.handle(event);
-          await message.ack();
-          return;
-        } catch (error) {
-          attempt++;
-          this.logger.warn('Retry attempt', { attempt, maxRetries, error });
-          
-          if (attempt >= maxRetries) {
-            // 送入死信佇列
-            await this.deadLetterQueue.send({
-              originalMessage: message,
-              error: error.message,
-              attempts: attempt,
-            });
-            await message.ack(); // 確認以避免無限重試
-          } else {
-            // 指數退避
-            await this.delay(Math.pow(2, attempt) * 1000);
-          }
-        }
-      }
+    // Action 2: Track analytics
+    await this.analyticsService.track({
+      event: 'workflow_created',
+      properties: {
+        workflowId: event.workflowId,
+        boardId: event.boardId,
+      },
     });
   }
 
-  private delay(ms: number): Promise<void> {
+  private isNonRetryable(error: Error): boolean {
+    return ['ValidationError', 'UnauthorizedError'].some(
+      type => error.name === type || error.constructor.name === type
+    );
+  }
+}
+```
+
+### Idempotency Service
+
+```typescript
+// src/infrastructure/idempotency/IdempotencyService.ts
+
+export interface IdempotencyService {
+  check(key: string): Promise<boolean>;
+  markProcessed(key: string, ttl: number): Promise<void>;
+}
+
+export class RedisIdempotencyService implements IdempotencyService {
+  constructor(private readonly redis: Redis) {}
+
+  async check(key: string): Promise<boolean> {
+    const exists = await this.redis.exists(`idempotency:${key}`);
+    return exists === 1;
+  }
+
+  async markProcessed(key: string, ttl: number): Promise<void> {
+    await this.redis.set(
+      `idempotency:${key}`,
+      JSON.stringify({ processedAt: new Date() }),
+      'PX',
+      ttl,
+    );
+  }
+}
+```
+
+### Retry Policy
+
+```typescript
+// src/infrastructure/retry/RetryPolicy.ts
+
+export interface RetryConfig {
+  maxAttempts: number;
+  backoff: {
+    type: 'exponential' | 'fixed' | 'linear';
+    initialDelay: number;
+    maxDelay: number;
+    multiplier?: number;
+  };
+  retryableErrors?: string[];
+}
+
+export class RetryPolicy {
+  async execute<T>(
+    fn: () => Promise<T>,
+    config: RetryConfig,
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 1; attempt <= config.maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        
+        // Check if retryable
+        if (config.retryableErrors?.length) {
+          const isRetryable = config.retryableErrors.some(
+            type => error.name === type
+          );
+          if (!isRetryable) {
+            throw error;
+          }
+        }
+
+        // Last attempt, throw
+        if (attempt === config.maxAttempts) {
+          throw error;
+        }
+
+        // Calculate delay
+        const delay = this.calculateDelay(attempt, config.backoff);
+        await this.sleep(delay);
+      }
+    }
+    
+    throw lastError!;
+  }
+
+  private calculateDelay(attempt: number, backoff: RetryConfig['backoff']): number {
+    let delay: number;
+    
+    switch (backoff.type) {
+      case 'exponential':
+        delay = backoff.initialDelay * Math.pow(backoff.multiplier ?? 2, attempt - 1);
+        break;
+      case 'linear':
+        delay = backoff.initialDelay * attempt;
+        break;
+      case 'fixed':
+      default:
+        delay = backoff.initialDelay;
+    }
+
+    return Math.min(delay, backoff.maxDelay);
+  }
+
+  private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 ```
 
+---
+
 ## Go 範例
 
+### Event Handler
+
 ```go
-// application/handler/order_created_handler.go
-package handler
+// src/application/handlers/workflow_created_handler.go
+
+package handlers
 
 import (
     "context"
     "fmt"
     "time"
+
+    "myapp/domain/events"
+    "myapp/infrastructure/idempotency"
+    "myapp/infrastructure/retry"
+    "myapp/infrastructure/dlq"
 )
 
-type OrderCreatedEvent struct {
-    EventID     string              `json:"event_id"`
-    OrderID     string              `json:"order_id"`
-    CustomerID  string              `json:"customer_id"`
-    Items       []OrderItemSnapshot `json:"items"`
-    TotalAmount int64               `json:"total_amount"`
-    OccurredAt  time.Time           `json:"occurred_at"`
+const (
+    idempotencyTTL = 7 * 24 * time.Hour
+    maxRetryAttempts = 3
+)
+
+type WorkflowCreatedHandler struct {
+    idempotency  idempotency.Service
+    retryPolicy  *retry.Policy
+    dlq          *dlq.DeadLetterQueue
+    notification NotificationService
+    analytics    AnalyticsService
 }
 
-type OrderCreatedHandler struct {
-    inventorySvc    InventoryService
-    notificationSvc NotificationService
-    idempotencySvc  IdempotencyService
-    logger          Logger
-}
-
-func NewOrderCreatedHandler(
-    inventorySvc InventoryService,
-    notificationSvc NotificationService,
-    idempotencySvc IdempotencyService,
-    logger Logger,
-) *OrderCreatedHandler {
-    return &OrderCreatedHandler{
-        inventorySvc:    inventorySvc,
-        notificationSvc: notificationSvc,
-        idempotencySvc:  idempotencySvc,
-        logger:          logger,
+func NewWorkflowCreatedHandler(
+    idem idempotency.Service,
+    rp *retry.Policy,
+    dlq *dlq.DeadLetterQueue,
+    notif NotificationService,
+    analytics AnalyticsService,
+) *WorkflowCreatedHandler {
+    return &WorkflowCreatedHandler{
+        idempotency:  idem,
+        retryPolicy:  rp,
+        dlq:          dlq,
+        notification: notif,
+        analytics:    analytics,
     }
 }
 
-func (h *OrderCreatedHandler) Handle(ctx context.Context, event OrderCreatedEvent) error {
-    idempotencyKey := fmt.Sprintf("order-created:%s", event.EventID)
+func (h *WorkflowCreatedHandler) Handle(ctx context.Context, event events.WorkflowCreatedEvent) error {
+    idempotencyKey := fmt.Sprintf("workflow-created:%s", event.ID)
 
-    // ===== 冪等性檢查 =====
-    isDuplicate, err := h.idempotencySvc.IsDuplicate(ctx, idempotencyKey)
+    // ===== Idempotency Check =====
+    processed, err := h.idempotency.Check(ctx, idempotencyKey)
     if err != nil {
-        return fmt.Errorf("idempotency check failed: %w", err)
+        return err
     }
-    if isDuplicate {
-        h.logger.Info("Duplicate event, skipping", "eventId", event.EventID)
-        return nil
-    }
-
-    // ===== 處理邏輯 =====
-    
-    // 1. 預留庫存
-    if err := h.inventorySvc.Reserve(ctx, ReserveRequest{
-        OrderID: event.OrderID,
-        Items:   event.Items,
-    }); err != nil {
-        return fmt.Errorf("failed to reserve inventory: %w", err)
+    if processed {
+        return nil // Already processed
     }
 
-    // 2. 發送通知
-    if err := h.notificationSvc.SendOrderConfirmation(ctx, NotificationRequest{
-        CustomerID:  event.CustomerID,
-        OrderID:     event.OrderID,
-        TotalAmount: event.TotalAmount,
-    }); err != nil {
-        return fmt.Errorf("failed to send notification: %w", err)
+    // ===== Execute with Retry =====
+    err = h.retryPolicy.Execute(ctx, func() error {
+        return h.processEvent(ctx, event)
+    }, retry.Config{
+        MaxAttempts:  maxRetryAttempts,
+        InitialDelay: time.Second,
+        MaxDelay:     30 * time.Second,
+        BackoffType:  retry.Exponential,
+    })
+
+    if err != nil {
+        // ===== Dead Letter Queue =====
+        if isNonRetryable(err) {
+            return h.dlq.Send(ctx, dlq.Message{
+                Event:     event,
+                Error:     err.Error(),
+                Timestamp: time.Now(),
+                Reason:    "non-retryable-error",
+            })
+        }
+        return err
     }
 
-    // ===== 標記處理完成 =====
-    if err := h.idempotencySvc.MarkProcessed(ctx, idempotencyKey); err != nil {
-        h.logger.Warn("Failed to mark as processed", "key", idempotencyKey, "error", err)
-    }
-
-    return nil
+    // ===== Mark as Processed =====
+    return h.idempotency.MarkProcessed(ctx, idempotencyKey, idempotencyTTL)
 }
 
-// Consumer with retry and dead letter
-type OrderEventsConsumer struct {
-    mq                  MessageQueue
-    orderCreatedHandler *OrderCreatedHandler
-    dlq                 DeadLetterQueue
-    logger              Logger
-    maxRetries          int
-}
+func (h *WorkflowCreatedHandler) processEvent(ctx context.Context, event events.WorkflowCreatedEvent) error {
+    // Action 1: Notify board members
+    if err := h.notification.NotifyBoardMembers(ctx, NotifyRequest{
+        BoardID:   event.BoardID,
+        Message:   fmt.Sprintf("New workflow %q created", event.Name),
+        CreatedBy: event.CreatedBy,
+    }); err != nil {
+        return err
+    }
 
-func (c *OrderEventsConsumer) Start(ctx context.Context) error {
-    return c.mq.Subscribe(ctx, "order.created", func(msg Message) error {
-        var event OrderCreatedEvent
-        if err := json.Unmarshal(msg.Body, &event); err != nil {
-            return c.sendToDeadLetter(msg, err, 0)
-        }
-
-        var lastErr error
-        for attempt := 1; attempt <= c.maxRetries; attempt++ {
-            if err := c.orderCreatedHandler.Handle(ctx, event); err != nil {
-                lastErr = err
-                c.logger.Warn("Retry attempt", 
-                    "attempt", attempt, 
-                    "maxRetries", c.maxRetries, 
-                    "error", err)
-                
-                // 指數退避
-                time.Sleep(time.Duration(1<<attempt) * time.Second)
-                continue
-            }
-            return nil // 成功
-        }
-
-        // 送入死信佇列
-        return c.sendToDeadLetter(msg, lastErr, c.maxRetries)
+    // Action 2: Track analytics
+    return h.analytics.Track(ctx, AnalyticsEvent{
+        Name: "workflow_created",
+        Properties: map[string]interface{}{
+            "workflow_id": event.WorkflowID,
+            "board_id":    event.BoardID,
+        },
     })
 }
 
-func (c *OrderEventsConsumer) sendToDeadLetter(msg Message, err error, attempts int) error {
-    return c.dlq.Send(DeadLetterMessage{
-        OriginalMessage: msg,
-        Error:           err.Error(),
-        Attempts:        attempts,
-        FailedAt:        time.Now().UTC(),
-    })
+func isNonRetryable(err error) bool {
+    switch err.(type) {
+    case *ValidationError, *UnauthorizedError:
+        return true
+    default:
+        return false
+    }
+}
+```
+
+### Retry Policy
+
+```go
+// src/infrastructure/retry/policy.go
+
+package retry
+
+import (
+    "context"
+    "math"
+    "time"
+)
+
+type BackoffType int
+
+const (
+    Fixed BackoffType = iota
+    Linear
+    Exponential
+)
+
+type Config struct {
+    MaxAttempts  int
+    InitialDelay time.Duration
+    MaxDelay     time.Duration
+    BackoffType  BackoffType
+    Multiplier   float64
+}
+
+type Policy struct{}
+
+func NewPolicy() *Policy {
+    return &Policy{}
+}
+
+func (p *Policy) Execute(ctx context.Context, fn func() error, cfg Config) error {
+    var lastErr error
+
+    for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
+        if err := fn(); err == nil {
+            return nil
+        } else {
+            lastErr = err
+        }
+
+        if attempt == cfg.MaxAttempts {
+            break
+        }
+
+        delay := p.calculateDelay(attempt, cfg)
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-time.After(delay):
+        }
+    }
+
+    return lastErr
+}
+
+func (p *Policy) calculateDelay(attempt int, cfg Config) time.Duration {
+    multiplier := cfg.Multiplier
+    if multiplier == 0 {
+        multiplier = 2
+    }
+
+    var delay time.Duration
+    switch cfg.BackoffType {
+    case Exponential:
+        delay = time.Duration(float64(cfg.InitialDelay) * math.Pow(multiplier, float64(attempt-1)))
+    case Linear:
+        delay = cfg.InitialDelay * time.Duration(attempt)
+    default:
+        delay = cfg.InitialDelay
+    }
+
+    if delay > cfg.MaxDelay {
+        return cfg.MaxDelay
+    }
+    return delay
 }
 ```
 
 ---
 
-## 輸出格式
-- 程式碼骨架或審查建議，符合 arch-guard、coding-standards、enforce-contract
-- 補充 YAML 規格中缺漏的技術約束（佇列名稱、最大重試、超時、冪等鍵來源）
+## 品質檢查清單
 
-## 檢查清單
-- [ ] 是否定義冪等策略並測試重放情境？
-- [ ] 重試/退避與死信流程是否清楚？
-- [ ] 外部呼叫是否具備超時、熔斷、隔離與觀測 (metrics/log/trace)？
-- [ ] 是否處理順序性與一次性需求（若需）？
-- [ ] 事件契約是否版本化、向後相容？
+- [ ] 是否有冪等性機制？
+- [ ] 重試策略是否區分 retryable 和 non-retryable 錯誤？
+- [ ] 是否有死信佇列處理失敗的事件？
+- [ ] 是否有監控和告警機制？
+- [ ] 是否考慮事件順序問題？
+- [ ] 是否有適當的日誌記錄？
+
+---
 
 ## 常見錯誤防範
-- ❌ 無冪等導致重放污染狀態
-- ❌ 無重試或退避導致雪崩
-- ❌ 將外部 SDK 直接放入 Domain 層（違反 arch-guard）
-- ❌ 無死信機制導致失敗訊息無限重試
-- ❌ 未設定超時導致 Handler 被長時間阻塞
 
+- ❌ 缺少冪等性檢查，導致重複處理
+- ❌ 所有錯誤都重試，包括不可恢復的錯誤
+- ❌ 沒有死信佇列，失敗的事件永遠丟失
+- ❌ 在 Handler 中執行同步阻塞操作過久
+- ❌ 沒有監控 DLQ 積壓情況
+- ❌ 忽略事件版本和順序問題

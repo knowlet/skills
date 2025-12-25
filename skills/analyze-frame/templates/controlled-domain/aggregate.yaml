@@ -1,0 +1,221 @@
+# ============================================================================
+# Aggregate Specification
+# ============================================================================
+# 
+# Domain 層規格：Aggregate Root 定義
+# 包含 Entities、Value Objects、Invariants、Domain Events
+# ============================================================================
+
+aggregate:
+  name: "{AggregateName}"
+  root: true
+  description: |
+    {Aggregate 的職責描述}
+  
+  # ---------------------------------------------------------------------------
+  # 身份識別
+  # ---------------------------------------------------------------------------
+  
+  identity:
+    name: "{AggregateName}Id"
+    type: "UUID"  # UUID | ULID | Snowflake | Custom
+    generation: "auto"  # auto | provided
+  
+  # ---------------------------------------------------------------------------
+  # 屬性
+  # ---------------------------------------------------------------------------
+  
+  properties:
+    - name: "name"
+      type: "string"
+      mutable: false  # 建立後不可變
+      description: "The name of the aggregate"
+    
+    - name: "status"
+      type: "{AggregateName}Status"
+      mutable: true
+      description: "Current status"
+      initial_value: "Draft"
+    
+    - name: "createdBy"
+      type: "UserId"
+      mutable: false
+      description: "The user who created this aggregate"
+    
+    - name: "createdAt"
+      type: "datetime"
+      mutable: false
+      description: "Creation timestamp"
+    
+    - name: "updatedAt"
+      type: "datetime"
+      mutable: true
+      description: "Last update timestamp"
+  
+  # ---------------------------------------------------------------------------
+  # 內部 Entities
+  # ---------------------------------------------------------------------------
+  
+  entities:
+    - name: "{ChildEntity}"
+      identity: "{ChildEntity}Id"
+      description: "{描述}"
+      properties:
+        - name: "name"
+          type: "string"
+        - name: "order"
+          type: "number"
+  
+  # ---------------------------------------------------------------------------
+  # Value Objects
+  # ---------------------------------------------------------------------------
+  
+  value_objects:
+    - name: "{AggregateName}Id"
+      properties:
+        - name: "value"
+          type: "string"
+          validation: "uuid"
+      description: "Strongly typed ID"
+    
+    - name: "{ValueObjectName}"
+      properties:
+        - name: "{prop1}"
+          type: "string"
+        - name: "{prop2}"
+          type: "number"
+      validation:
+        - "{prop2} must be positive"
+      description: "{描述}"
+  
+  # ---------------------------------------------------------------------------
+  # Invariants（不變量）
+  # ---------------------------------------------------------------------------
+  # 
+  # Invariants 是 Aggregate 在任何時刻都必須滿足的規則
+  # 在 constructor 和所有 mutating methods 中強制執行
+  # 
+  # ⚠️ 每個 Invariant 必須被 Frame Concern 的 satisfied_by 連結
+  # ---------------------------------------------------------------------------
+  
+  invariants:
+    shared:
+      - id: INV1
+        name: "{InvariantName}"
+        rule: |
+          {描述這個不變量}
+          {例如：SwimLane must be under a Stage}
+        enforced_in:
+          - "constructor"
+          - "method:add{ChildEntity}"
+          - "method:remove{ChildEntity}"
+        error_message: "{違反時的錯誤訊息}"
+      
+      - id: INV2
+        name: "{AnotherInvariantName}"
+        rule: |
+          {描述}
+        enforced_in:
+          - "constructor"
+          - "method:updateStatus"
+        error_message: "{違反時的錯誤訊息}"
+  
+  # ---------------------------------------------------------------------------
+  # 行為 (Methods)
+  # ---------------------------------------------------------------------------
+  
+  behaviors:
+    - name: "create"
+      type: "factory"  # factory | command | query
+      description: "Create a new aggregate instance"
+      parameters:
+        - name: "props"
+          type: "Create{AggregateName}Props"
+      returns: "{AggregateName}"
+      enforces_invariants:
+        - INV1
+        - INV2
+    
+    - name: "add{ChildEntity}"
+      type: "command"
+      description: "Add a child entity"
+      parameters:
+        - name: "child"
+          type: "{ChildEntity}"
+      pre_conditions:
+        - "child is not null"
+        - "child does not already exist"
+      post_conditions:
+        - "child is added to the collection"
+      enforces_invariants:
+        - INV1
+    
+    - name: "updateStatus"
+      type: "command"
+      description: "Update the status"
+      parameters:
+        - name: "newStatus"
+          type: "{AggregateName}Status"
+      pre_conditions:
+        - "status transition is valid"
+      post_conditions:
+        - "status is updated"
+        - "updatedAt is updated"
+      enforces_invariants:
+        - INV2
+  
+  # ---------------------------------------------------------------------------
+  # Domain Events
+  # ---------------------------------------------------------------------------
+  
+  domain_events:
+    - name: "{AggregateName}CreatedEvent"
+      description: "Raised when aggregate is created"
+      properties:
+        - name: "id"
+          type: "{AggregateName}Id"
+        - name: "name"
+          type: "string"
+        - name: "createdBy"
+          type: "UserId"
+        - name: "createdAt"
+          type: "datetime"
+    
+    - name: "{AggregateName}UpdatedEvent"
+      description: "Raised when aggregate is updated"
+      properties:
+        - name: "id"
+          type: "{AggregateName}Id"
+        - name: "changes"
+          type: "object"
+        - name: "updatedAt"
+          type: "datetime"
+  
+  # ---------------------------------------------------------------------------
+  # Repository Interface
+  # ---------------------------------------------------------------------------
+  # 
+  # Repository 介面定義在 Domain 層
+  # 實作放在 Infrastructure 層
+  # ---------------------------------------------------------------------------
+  
+  repository:
+    interface_name: "{AggregateName}Repository"
+    methods:
+      - name: "save"
+        parameters:
+          - name: "aggregate"
+            type: "{AggregateName}"
+        returns: "void"
+      
+      - name: "findById"
+        parameters:
+          - name: "id"
+            type: "{AggregateName}Id"
+        returns: "{AggregateName} | null"
+      
+      - name: "delete"
+        parameters:
+          - name: "id"
+            type: "{AggregateName}Id"
+        returns: "void"

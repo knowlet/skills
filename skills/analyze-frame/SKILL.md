@@ -1,6 +1,6 @@
 ---
 name: analyze-frame
-description: 當接收到新需求或 Event Storming 產出後觸發。分析問題類別（CBF/IDF/RIF），並生成 YAML 規格書。實現「規格即文檔、文檔即規格」。
+description: 當接收到新需求或 Event Storming 產出後觸發。分析問題類別（CBF/IDF/RIF），生成完整的規格目錄結構。實現「需求與實作分離」、「規格即文檔、文檔即規格」。
 ---
 
 # Analyze Frame Skill
@@ -13,12 +13,14 @@ description: 當接收到新需求或 Event Storming 產出後觸發。分析問
 
 ## 核心任務
 
-將需求分析為 Problem Frames 的三種類別，並輸出結構化 YAML 規格書。
+將需求分析為 Problem Frames 的五種基本類別，並輸出結構化的規格目錄。
+
+---
 
 ## Problem Frame 類別定義
 
-### CBF (Command-Based Frame) - 命令框架
-- **特徵**：使用者發出命令，系統執行狀態變更
+### CBF (Commanded Behavior Frame) - 命令行為框架
+- **特徵**：Operator 發出命令，Machine 控制 Controlled Domain 執行狀態變更
 - **對應 Sub-agent**：`command-sub-agent`
 - **典型場景**：建立訂單、更新資料、執行交易
 - **CQRS 角色**：Command Side
@@ -29,123 +31,426 @@ description: 當接收到新需求或 Event Storming 產出後觸發。分析問
 - **典型場景**：查詢報表、搜尋資料、讀取詳情
 - **CQRS 角色**：Query Side
 
-### RIF (Reactive/Integration Frame) - 反應式框架
+### RIF (Required Behavior Frame) - 反應式框架
 - **特徵**：系統對事件做出反應，通常是非同步處理
 - **對應 Sub-agent**：`reactor-sub-agent`
 - **典型場景**：事件監聽、訊息處理、系統整合
 
+### WPF (Workpieces Frame) - 工作件框架
+- **特徵**：對工作產物（文件、報告）進行編輯與管理
+- **典型場景**：文件編輯、報表生成
+
+### TF (Transformation Frame) - 轉換框架
+- **特徵**：輸入資料經過轉換產生輸出
+- **典型場景**：資料轉換、格式轉換、ETL
+
+---
+
+## 輸出：規格目錄結構
+
+在 `docs/specs/{feature-name}/` 目錄下生成完整規格：
+
+```
+docs/specs/{feature-name}/
+├── frame.yaml                 # 問題框架定義 (核心)
+│
+├── requirements/              # 需求層 (What) - 純業務語言
+│   └── req-1-{feature}.yaml
+│
+├── machine/                   # 機器層 (How) - Application 層
+│   ├── machine.yaml           # Machine 定義
+│   ├── controller.yaml        # API 入口規格
+│   └── use-case.yaml          # Use Case 規格
+│
+├── controlled-domain/         # 領域層 - Domain 層
+│   └── aggregate.yaml         # Aggregate + Entities + Value Objects
+│
+├── cross-context/             # 跨 Bounded Context 依賴
+│   └── {context-name}.yaml    # ACL 定義
+│
+├── acceptance/                # 驗收測試
+│   ├── acceptance.yaml        # 測試規格
+│   └── generated/             # AI 生成的 ezSpec
+│       └── {feature}.feature
+│
+└── runbook/
+    └── execute.md             # 執行指南
+```
+
+---
+
+## frame.yaml 規格格式
+
+```yaml
+# docs/specs/{feature-name}/frame.yaml
+problem_frame: "{FeatureName}"
+frame_type: CommandedBehaviorFrame  # | InformationDisplayFrame | RequiredBehaviorFrame
+
+intent: |
+  {一句話描述問題意圖}
+  {使用 "When ... the Machine shall ..." 格式}
+
+# ---------------------------------------------------------------------------
+# Problem Frame Components
+# ---------------------------------------------------------------------------
+
+operator:
+  name: "{Actor}"
+  description: "{Actor 描述}"
+
+machine:
+  name: "{FeatureName}Machine"
+  machine_spec: machine/machine.yaml
+
+controlled_domain:
+  domain: "{DomainName}"
+  entity: "{AggregateRoot} (Aggregate Root)"
+  aggregate_spec: controlled-domain/aggregate.yaml
+
+# ---------------------------------------------------------------------------
+# Frame Concerns（問題框架關注點）
+# ---------------------------------------------------------------------------
+
+frame_concerns:
+  - id: FC1
+    name: "{Concern Name}"
+    description: |
+      {描述這個關注點的業務規則或技術約束}
+    satisfied_by:
+      - controlled-domain/aggregate.yaml#invariants.{name}
+      - tests#{test-id}
+
+  - id: FC2
+    name: "Interference / Concurrency"
+    description: |
+      {描述並發或干擾問題}
+    satisfied_by:
+      - machine/use-case.yaml#transaction_boundary
+      - machine/use-case.yaml#idempotency
+
+# ---------------------------------------------------------------------------
+# Cross-Context Dependencies（跨限界上下文依賴）
+# ---------------------------------------------------------------------------
+
+cross_context_dependencies:
+  - id: XC1
+    name: "{DependencyName}"
+    source_context: "{SourceBC}"
+    target_context: "{CurrentBC}"
+    interface_type: "AntiCorruption Layer"
+    contract_spec: cross-context/{context-name}.yaml
+
+# ---------------------------------------------------------------------------
+# Generation Metadata（生成元數據）
+# ---------------------------------------------------------------------------
+
+generation:
+  version: "1.0.0"
+  created_at: "{ISO-8601}"
+  last_generated: null
+  
+  history: []
+  
+  output_paths:
+    application: "src/application/use-cases/"
+    domain: "src/domain/"
+    infrastructure: "src/infrastructure/"
+```
+
+---
+
+## requirements/req-{n}-{feature}.yaml 格式
+
+```yaml
+# 需求層：純業務語言，不含任何實作細節
+requirement:
+  id: REQ-{NNN}
+  title: "{Feature Title}"
+  type: functional  # | non-functional | constraint
+  priority: high    # | medium | low
+  
+  # User Story 格式
+  description: |
+    As a {Actor}
+    I want to {Action}
+    So that {Benefit}
+  
+  # 業務規則（仍在需求層，無實作）
+  business_rules:
+    - id: BR1
+      rule: "{Business Rule 1}"
+    - id: BR2
+      rule: "{Business Rule 2}"
+  
+  # 連結到 Frame Concerns
+  addresses_concerns:
+    - FC1
+    - FC2
+  
+  # 驗收條件（高層次）
+  acceptance_conditions:
+    - "AC1: {Condition 1}"
+    - "AC2: {Condition 2}"
+```
+
+---
+
+## machine/use-case.yaml 格式
+
+```yaml
+# Machine 層：Application 層規格
+use_case:
+  name: "{FeatureName}UseCase"
+  type: command  # | query
+  
+  # Input/Output 定義
+  input:
+    name: "{FeatureName}Input"
+    fields:
+      - name: "{fieldName}"
+        type: "{Type}"
+        required: true
+        validation: "{validation rule}"
+  
+  output:
+    name: "{FeatureName}Output"
+    fields:
+      - name: "{fieldName}"
+        type: "{Type}"
+
+  # Design by Contract
+  contracts:
+    pre_conditions:
+      - id: PRE1
+        condition: "{condition}"
+        error: "{ErrorType}"
+    
+    post_conditions:
+      - id: POST1
+        condition: "{condition}"
+  
+  # 技術約束
+  transaction_boundary:
+    type: "RequiresNew"
+    isolation: "ReadCommitted"
+  
+  idempotency:
+    enabled: true
+    key: "{idempotencyKeyField}"
+  
+  # 發布的 Domain Events
+  publishes_events:
+    - "{FeatureName}CreatedEvent"
+```
+
+---
+
+## controlled-domain/aggregate.yaml 格式
+
+```yaml
+# Domain 層：Aggregate 規格
+aggregate:
+  name: "{AggregateName}"
+  root: true
+  
+  # 身份識別
+  identity:
+    name: "{AggregateName}Id"
+    type: "UUID"
+  
+  # 屬性
+  properties:
+    - name: "{propertyName}"
+      type: "{Type}"
+      mutable: false
+  
+  # 內部 Entities
+  entities:
+    - name: "{EntityName}"
+      identity: "{EntityName}Id"
+  
+  # Value Objects
+  value_objects:
+    - name: "{ValueObjectName}"
+      properties:
+        - name: "{prop}"
+          type: "{Type}"
+  
+  # Invariants（不變量）
+  invariants:
+    shared:
+      - id: INV1
+        name: "{InvariantName}"
+        rule: "{Rule description}"
+        enforced_in: 
+          - "constructor"
+          - "method:{methodName}"
+  
+  # Domain Events
+  domain_events:
+    - name: "{AggregateName}CreatedEvent"
+      properties:
+        - name: "{prop}"
+          type: "{Type}"
+```
+
+---
+
 ## 分析流程
 
-1. **識別 Actor**：誰發起這個需求？
-2. **識別 Action**：要執行什麼動作？
-3. **識別 Effect**：對系統狀態有什麼影響？
-4. **分類 Frame**：根據上述判斷屬於 CBF/IDF/RIF
-5. **生成規格書**：輸出標準化 YAML
+1. **識別 Operator**：誰發起這個需求？
+2. **識別 Machine**：需要什麼機器來處理？
+3. **識別 Controlled Domain**：控制什麼領域實體？
+4. **識別 Frame Concerns**：有哪些關注點需要滿足？
+5. **識別 Cross-Context**：是否依賴其他 Bounded Context？
+6. **分類 Frame**：根據上述判斷屬於五種 Frame 之一
+7. **生成規格目錄**：輸出完整目錄結構
 
-## YAML 規格書範本
-
-在 `docs/specs/` 目錄下生成規格書，遵循以下格式：
-
-```yaml
-# docs/specs/{feature-name}.yaml
-metadata:
-  name: "{feature-name}"
-  version: "1.0.0"
-  created_at: "{ISO-8601-timestamp}"
-  frame_type: "CBF | IDF | RIF"
-  sub_agent: "command-sub-agent | query-sub-agent | reactor-sub-agent"
-
-problem_statement:
-  actor: "{誰發起}"
-  goal: "{要達成什麼}"
-  context: "{在什麼情境下}"
-
-domain:
-  aggregate: "{聚合根名稱}"
-  bounded_context: "{限界上下文}"
-  entities: []
-  value_objects: []
-
-acceptance_criteria:
-  # BDD/ezSpec 格式
-  - scenario: "{場景名稱}"
-    given: "{前置條件}"
-    when: "{觸發動作}"
-    then: "{預期結果}"
-
-technical_constraints:
-  - "{技術約束 1}"
-  - "{技術約束 2}"
-
-contracts:
-  pre_conditions:
-    - "{輸入參數必須不為 null}"
-    - "{數量必須大於 0}"
-  post_conditions:
-    - "{產出結果必須包含 ID}"
-    - "{狀態必須變更為 CREATED}"
-  invariants:
-    - "{訂單總金額必須等於細項總和}"
-```
-
-## 輸出要求
-
-1. **規格即文檔**：YAML 必須足夠詳細，讓 Sub-agent 可直接依據執行
-2. **人類可讀**：同時確保架構師與開發者能閱讀理解
-3. **版本化**：每次修改需更新版本號
-4. **可追溯**：保留完整的需求到規格的對應關係
-
-## 範例分析
-
-### 輸入需求
-> 「使用者可以建立新訂單，選擇商品並指定數量」
-
-### 分析結果
-```yaml
-metadata:
-  name: "create-order"
-  version: "1.0.0"
-  created_at: "2024-12-24T10:00:00Z"
-  frame_type: "CBF"
-  sub_agent: "command-sub-agent"
-
-problem_statement:
-  actor: "Customer"
-  goal: "建立包含商品的新訂單"
-  context: "在購物流程中完成下單"
-
-domain:
-  aggregate: "Order"
-  bounded_context: "OrderManagement"
-  entities:
-    - "Order"
-    - "OrderItem"
-  value_objects:
-    - "OrderId"
-    - "Quantity"
-    - "Money"
-
-acceptance_criteria:
-  - scenario: "成功建立訂單"
-    given: "使用者已登入且購物車有商品"
-    when: "使用者點擊確認訂單"
-    then: "系統建立訂單並回傳訂單編號"
-  
-  - scenario: "商品庫存不足"
-    given: "使用者選擇的商品庫存為 0"
-    when: "使用者嘗試建立訂單"
-    then: "系統拒絕並提示庫存不足"
-
-technical_constraints:
-  - "訂單建立必須是原子操作"
-  - "需發送 OrderCreated 領域事件"
-```
+---
 
 ## 品質檢查清單
 
 - [ ] Frame 類別判斷是否正確？
-- [ ] 是否明確識別出 Aggregate Root？
+- [ ] 需求層是否只有業務語言，無實作細節？
+- [ ] Frame Concerns 是否有明確的 satisfied_by 連結？
+- [ ] 是否識別出所有跨 BC 依賴？
+- [ ] Aggregate Invariants 是否完整？
 - [ ] Acceptance Criteria 是否可測試？
-- [ ] 是否包含完整的 Contracts (Pre/Post/Invariants)？
 - [ ] 是否涵蓋主要的異常場景？
-- [ ] Sub-agent 對應是否正確？
+
+---
+
+## 與其他 Skills 的協作
+
+```
+analyze-frame (本 Skill)
+    │
+    ├── 輸出 → frame.yaml + 目錄結構
+    │
+    ├── spec-template → 生成各層 YAML 模板
+    │
+    ├── cross-context → 處理跨 BC 依賴
+    │
+    └── 觸發 Sub-agents
+        ├── command-sub-agent (CBF)
+        ├── query-sub-agent (IDF)
+        └── reactor-sub-agent (RIF)
+```
+
+---
+
+## 工具腳本 (scripts/)
+
+本 Skill 提供驗證工具，位於 `scripts/` 目錄：
+
+### validate_spec.py - 規格驗證器
+
+用於驗證規格目錄的完整性與正確性。
+
+**使用方式：**
+
+```bash
+# 驗證單一功能規格
+python ~/.claude/skills/analyze-frame/scripts/validate_spec.py docs/specs/create-workflow/
+
+# 驗證多個規格
+python ~/.claude/skills/analyze-frame/scripts/validate_spec.py docs/specs/create-workflow/ docs/specs/query-dashboard/
+
+# 在 CI/CD 中使用
+python ~/.claude/skills/analyze-frame/scripts/validate_spec.py docs/specs/*/ || exit 1
+```
+
+**驗證項目：**
+
+| 檢查項目 | 類型 | 說明 |
+|---------|------|------|
+| 目錄結構 | ERROR | 必要目錄是否存在 |
+| frame.yaml | ERROR | 問題框架定義是否存在且有效 |
+| YAML 語法 | ERROR | 所有 YAML 檔案語法正確性 |
+| Frame Concerns | WARNING | 是否有 satisfied_by 連結 |
+| Cross-Context | INFO | ACL 規格是否存在 |
+| Acceptance | WARNING | 測試覆蓋率檢查 |
+
+**Exit Codes：**
+- `0`: 驗證通過
+- `1`: 有 ERROR 級別錯誤
+- `2`: 參數錯誤
+
+---
+
+## 規格範本 (templates/)
+
+本 Skill 提供完整的 YAML 規格範本，位於 `templates/` 目錄：
+
+```
+templates/
+├── frame.yaml                      # 問題框架範本
+├── requirements/
+│   └── req-template.yaml           # 需求規格範本 (純業務語言)
+├── machine/
+│   └── use-case.yaml               # Use Case 規格範本
+├── controlled-domain/
+│   └── aggregate.yaml              # Aggregate 規格範本
+├── acceptance/
+│   └── acceptance.yaml             # 驗收測試範本
+├── cross-context/
+│   └── authorization.yaml          # ACL 規格範本
+└── runbook/
+    └── execute.md                  # 執行指南範本
+```
+
+### 範本使用方式
+
+1. **初始化新功能規格**：
+   ```bash
+   # 建立目錄結構
+   mkdir -p docs/specs/{feature-name}/{requirements,machine,controlled-domain,cross-context,acceptance,runbook}
+   
+   # 複製範本
+   cp ~/.claude/skills/analyze-frame/templates/frame.yaml docs/specs/{feature-name}/
+   ```
+
+2. **在 Claude 中使用**：
+   ```
+   請根據 ~/.claude/skills/analyze-frame/templates/ 的範本
+   為「建立工作流程」功能生成規格目錄
+   ```
+
+### 範本特點
+
+| 範本 | 用途 | 特點 |
+|------|------|------|
+| `frame.yaml` | 問題框架定義 | 包含 frame_concerns + satisfied_by |
+| `req-template.yaml` | 需求規格 | 純業務語言，禁止實作細節 |
+| `use-case.yaml` | Application 層 | Design by Contract、冪等性 |
+| `aggregate.yaml` | Domain 層 | Invariants 含 enforced_in |
+| `acceptance.yaml` | 測試規格 | BDD 格式，ezSpec 相容 |
+| `authorization.yaml` | ACL 規格 | 容錯、重試、Circuit Breaker |
+| `execute.md` | 執行指南 | 生成步驟、品質驗證 |
+
+---
+
+## 完整工作流程
+
+```
+1. 需求輸入
+       ↓
+2. 分析問題框架 (analyze-frame)
+       ↓
+3. 生成規格目錄 (使用 templates/)
+       ↓
+4. 驗證規格完整性 (scripts/validate_spec.py)
+       ↓
+5. 分派至 Sub-agent
+   ├── command-sub-agent (CBF)
+   ├── query-sub-agent (IDF)
+   └── reactor-sub-agent (RIF)
+       ↓
+6. 生成程式碼
+       ↓
+7. 生成驗收測試 (generate-acceptance-test)
+       ↓
+8. 品質檢查 (arch-guard, enforce-contract)
+       ↓
+9. 執行測試驗證
+```

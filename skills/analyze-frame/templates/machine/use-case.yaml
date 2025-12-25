@@ -1,0 +1,138 @@
+# ============================================================================
+# Use Case Specification (for CommandedBehaviorFrame)
+# ============================================================================
+# 
+# Machine 層規格：Application 層的 Use Case 定義
+# 對應 CQRS 的 Command Side
+# ============================================================================
+
+use_case:
+  name: "{FeatureName}UseCase"
+  type: command  # command | query
+  
+  # ---------------------------------------------------------------------------
+  # Input/Output 定義
+  # ---------------------------------------------------------------------------
+  # 
+  # 所有欄位都應該是 immutable
+  # 使用 readonly 或 final 關鍵字
+  # ---------------------------------------------------------------------------
+  
+  input:
+    name: "{FeatureName}Input"
+    fields:
+      - name: "id"
+        type: "string"
+        required: true
+        validation: "uuid format"
+        description: "The unique identifier"
+      
+      - name: "name"
+        type: "string"
+        required: true
+        validation: "min=1, max=100"
+        description: "The name"
+      
+      - name: "operatorId"
+        type: "string"
+        required: true
+        validation: "uuid format"
+        description: "The ID of the operator performing this action"
+  
+  output:
+    name: "{FeatureName}Output"
+    fields:
+      - name: "id"
+        type: "string"
+        description: "The generated ID"
+      
+      - name: "status"
+        type: "string"
+        description: "The status after operation"
+      
+      - name: "createdAt"
+        type: "datetime"
+        description: "The creation timestamp"
+  
+  # ---------------------------------------------------------------------------
+  # Design by Contract
+  # ---------------------------------------------------------------------------
+  
+  contracts:
+    pre_conditions:
+      - id: PRE1
+        condition: "input.id is not null and valid UUID"
+        error: "ValidationError"
+        message: "id is required and must be valid UUID"
+      
+      - id: PRE2
+        condition: "input.name is not empty and length <= 100"
+        error: "ValidationError"
+        message: "name must be between 1 and 100 characters"
+      
+      - id: PRE3
+        condition: "operator is authorized to perform this action"
+        error: "UnauthorizedError"
+        message: "Not authorized to perform this action"
+    
+    post_conditions:
+      - id: POST1
+        condition: "result.id is not null"
+        description: "Output must contain a valid ID"
+      
+      - id: POST2
+        condition: "entity is persisted in repository"
+        description: "The aggregate must be saved"
+      
+      - id: POST3
+        condition: "domain event is published"
+        description: "The corresponding domain event must be published"
+  
+  # ---------------------------------------------------------------------------
+  # 技術約束
+  # ---------------------------------------------------------------------------
+  
+  transaction_boundary:
+    type: "RequiresNew"  # RequiresNew | Required | Supports
+    isolation: "ReadCommitted"  # ReadCommitted | RepeatableRead | Serializable
+    timeout: "30s"
+  
+  idempotency:
+    enabled: true
+    key: "operatorId + requestId"  # 或其他冪等鍵
+    storage: "database"  # database | redis
+    ttl: "24h"
+  
+  # ---------------------------------------------------------------------------
+  # 發布的 Domain Events
+  # ---------------------------------------------------------------------------
+  
+  publishes_events:
+    - name: "{FeatureName}CreatedEvent"
+      description: "Published when the operation succeeds"
+      properties:
+        - name: "id"
+          type: "string"
+        - name: "name"
+          type: "string"
+        - name: "createdBy"
+          type: "string"
+        - name: "createdAt"
+          type: "datetime"
+  
+  # ---------------------------------------------------------------------------
+  # 依賴的服務
+  # ---------------------------------------------------------------------------
+  
+  dependencies:
+    - name: "AuthorizationService"
+      type: "ACL"
+      source: "cross-context/authorization.yaml"
+    
+    - name: "{Aggregate}Repository"
+      type: "Repository"
+      source: "controlled-domain/aggregate.yaml"
+    
+    - name: "EventPublisher"
+      type: "Infrastructure"
+      description: "For publishing domain events"

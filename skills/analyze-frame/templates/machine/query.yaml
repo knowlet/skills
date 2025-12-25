@@ -1,0 +1,198 @@
+# Machine 層：Query 規格 (用於 IDF)
+# 此為 TEMPLATE，請根據實際需求修改
+
+query:
+  name: "{QueryName}Query"
+  type: query
+  frame_type: InformationDisplayFrame  # IDF
+  
+  # ---------------------------------------------------------------------------
+  # Input/Output 定義
+  # ---------------------------------------------------------------------------
+  
+  input:
+    name: "{QueryName}Input"
+    fields:
+      - name: "{filterId}"
+        type: "UUID | null"
+        required: false
+        description: "篩選條件"
+      
+      - name: "pagination"
+        type: "object"
+        required: false
+        properties:
+          - name: "page"
+            type: "integer"
+            default: 1
+          - name: "pageSize"
+            type: "integer"
+            default: 20
+            max: 100
+      
+      - name: "sort"
+        type: "object"
+        required: false
+        properties:
+          - name: "field"
+            type: "string"
+            enum: ["{sortableField1}", "{sortableField2}"]
+          - name: "order"
+            type: "string"
+            enum: ["asc", "desc"]
+            default: "desc"
+
+  output:
+    name: "{QueryName}Output"
+    type: "paginated"  # | single | list
+    fields:
+      - name: "items"
+        type: "array"
+        item_type: "{QueryName}Item"
+      
+      - name: "pagination"
+        type: "object"
+        properties:
+          - name: "page"
+            type: "integer"
+          - name: "pageSize"
+            type: "integer"
+          - name: "totalItems"
+            type: "integer"
+          - name: "totalPages"
+            type: "integer"
+    
+    # 單筆項目結構
+    item_schema:
+      name: "{QueryName}Item"
+      fields:
+        - name: "id"
+          type: "UUID"
+        - name: "{field1}"
+          type: "{Type}"
+        - name: "{field2}"
+          type: "{Type}"
+        # 只包含 Read Model 需要的欄位，非 Aggregate 全部欄位
+
+  # ---------------------------------------------------------------------------
+  # Design by Contract
+  # ---------------------------------------------------------------------------
+  
+  contracts:
+    pre_conditions:
+      - id: PRE1
+        condition: "pagination.pageSize <= 100"
+        error: "InvalidPaginationError"
+        description: "每頁最多 100 筆"
+      
+      - id: PRE2
+        condition: "sort.field in allowed_sort_fields"
+        error: "InvalidSortFieldError"
+        description: "只能用允許的欄位排序"
+    
+    post_conditions:
+      - id: POST1
+        condition: "items.length <= pagination.pageSize"
+        description: "回傳筆數不超過請求的 pageSize"
+      
+      - id: POST2
+        condition: "pagination.page <= pagination.totalPages || items.length == 0"
+        description: "頁碼不超過總頁數"
+
+  # ---------------------------------------------------------------------------
+  # 讀取模型（Read Model）
+  # ---------------------------------------------------------------------------
+  
+  read_model:
+    name: "{QueryName}ReadModel"
+    
+    # 資料來源
+    data_source:
+      type: "materialized_view"  # | table | projection
+      name: "{query_name}_view"
+      
+    # 投影定義（從 Domain Events 建立）
+    projections:
+      - event: "{Aggregate}CreatedEvent"
+        action: "insert"
+        mapping:
+          id: "event.aggregateId"
+          "{field1}": "event.{property1}"
+      
+      - event: "{Aggregate}UpdatedEvent"
+        action: "update"
+        condition: "id = event.aggregateId"
+        mapping:
+          "{field1}": "event.{property1}"
+      
+      - event: "{Aggregate}DeletedEvent"
+        action: "delete"
+        condition: "id = event.aggregateId"
+
+  # ---------------------------------------------------------------------------
+  # 快取策略
+  # ---------------------------------------------------------------------------
+  
+  caching:
+    enabled: true
+    strategy: "cache-aside"  # | read-through | write-through
+    
+    ttl: "5m"
+    
+    cache_key:
+      pattern: "{queryName}:{hash(input)}"
+      components:
+        - "input.filters"
+        - "input.pagination.page"
+        - "input.pagination.pageSize"
+    
+    invalidation:
+      strategy: "event-driven"
+      triggers:
+        - event: "{Aggregate}CreatedEvent"
+          action: "invalidate_list"
+        - event: "{Aggregate}UpdatedEvent"
+          action: "invalidate_item"
+          key: "event.aggregateId"
+        - event: "{Aggregate}DeletedEvent"
+          action: "invalidate_all"
+
+  # ---------------------------------------------------------------------------
+  # 效能優化
+  # ---------------------------------------------------------------------------
+  
+  performance:
+    timeout: "3s"
+    
+    # 資料庫提示
+    database_hints:
+      use_index: ["{index_name}"]
+      explain_analyze: true  # 開發時啟用
+    
+    # 批次載入（避免 N+1）
+    batch_loading:
+      enabled: true
+      relations:
+        - name: "{relationName}"
+          strategy: "dataloader"
+
+  # ---------------------------------------------------------------------------
+  # 跨 BC 依賴（若有）
+  # ---------------------------------------------------------------------------
+  
+  cross_context_data:
+    - source_context: "{SourceBC}"
+      data_needed: "{DataName}"
+      strategy: "replicated"  # | on-demand | cached
+      sync_frequency: "realtime"  # | hourly | daily
+
+# ---------------------------------------------------------------------------
+# Frame Concern 映射
+# ---------------------------------------------------------------------------
+
+satisfies_concerns:
+  - concern_id: FC1
+    satisfied_by:
+      - read_model.projections
+      - caching.invalidation
+    description: "確保讀取資料一致性"

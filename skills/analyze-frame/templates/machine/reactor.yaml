@@ -1,0 +1,237 @@
+# Machine 層：Reactor 規格 (用於 RIF)
+# 此為 TEMPLATE，請根據實際需求修改
+
+reactor:
+  name: "{ReactorName}Reactor"
+  type: reactor
+  frame_type: RequiredBehaviorFrame  # RIF
+  
+  # ---------------------------------------------------------------------------
+  # 事件觸發源
+  # ---------------------------------------------------------------------------
+  
+  triggers:
+    - event: "{SourceAggregate}{Action}Event"
+      source_context: "{SourceBC}"
+      description: "當 {SourceAggregate} 執行 {Action} 時觸發"
+      
+      # 事件結構（用於映射）
+      payload:
+        - name: "aggregateId"
+          type: "UUID"
+        - name: "{property1}"
+          type: "{Type}"
+        - name: "occurredAt"
+          type: "DateTime"
+
+  # ---------------------------------------------------------------------------
+  # 處理邏輯
+  # ---------------------------------------------------------------------------
+  
+  handler:
+    name: "{ReactorName}Handler"
+    
+    # 輸入映射（從事件 payload）
+    input_mapping:
+      "{localField}": "event.{eventField}"
+    
+    # 執行動作
+    actions:
+      - name: "{ActionName}"
+        type: "command"  # | notification | integration
+        target:
+          aggregate: "{TargetAggregate}"
+          method: "{methodName}"
+        
+        # 動作參數
+        parameters:
+          - name: "{paramName}"
+            source: "event.{eventField}"
+      
+      - name: "SendNotification"
+        type: "notification"
+        target:
+          channel: "email"  # | sms | push | webhook
+        template: "{notification_template_id}"
+        recipients:
+          source: "event.{recipientField}"  # | lookup:{service}
+
+  # ---------------------------------------------------------------------------
+  # 冪等性設計
+  # ---------------------------------------------------------------------------
+  
+  idempotency:
+    enabled: true
+    
+    # 冪等鍵
+    key:
+      strategy: "event_id"  # | composite | custom
+      # composite 範例:
+      # components:
+      #   - "event.aggregateId"
+      #   - "event.occurredAt"
+    
+    # 儲存
+    storage:
+      type: "database"  # | redis | in-memory
+      table: "processed_events"
+      ttl: "7d"
+    
+    # 重複處理行為
+    on_duplicate:
+      action: "skip"  # | warn | error
+      log_level: "info"
+
+  # ---------------------------------------------------------------------------
+  # 重試策略
+  # ---------------------------------------------------------------------------
+  
+  retry:
+    enabled: true
+    
+    strategy: "exponential"  # | linear | fixed
+    
+    config:
+      max_attempts: 5
+      initial_delay: "1s"
+      max_delay: "60s"
+      multiplier: 2
+    
+    # 可重試的錯誤類型
+    retryable_errors:
+      - "NetworkError"
+      - "TimeoutError"
+      - "ServiceUnavailableError"
+    
+    # 不可重試的錯誤
+    non_retryable_errors:
+      - "ValidationError"
+      - "AuthorizationError"
+      - "InvalidStateError"
+
+  # ---------------------------------------------------------------------------
+  # Dead Letter Queue (DLQ)
+  # ---------------------------------------------------------------------------
+  
+  dead_letter_queue:
+    enabled: true
+    
+    queue_name: "{reactor_name}_dlq"
+    
+    # 進入 DLQ 的條件
+    conditions:
+      - "max_retries_exceeded"
+      - "non_retryable_error"
+      - "poison_message"
+    
+    # DLQ 處理
+    handling:
+      alert:
+        enabled: true
+        channels: ["slack", "pagerduty"]
+        severity: "high"
+      
+      # 手動重試介面
+      manual_retry:
+        enabled: true
+        endpoint: "/admin/dlq/{reactor_name}/retry"
+      
+      # 自動歸檔
+      archive:
+        enabled: true
+        after: "30d"
+        storage: "s3"
+
+  # ---------------------------------------------------------------------------
+  # 交易邊界
+  # ---------------------------------------------------------------------------
+  
+  transaction:
+    # Outbox Pattern（推薦）
+    outbox:
+      enabled: true
+      table: "outbox_events"
+    
+    # Saga 參與（若跨多個 Aggregate）
+    saga:
+      enabled: false
+      saga_id: "{saga_name}"
+      step: "{step_number}"
+      compensating_action: "{compensate_method}"
+
+  # ---------------------------------------------------------------------------
+  # 順序保證
+  # ---------------------------------------------------------------------------
+  
+  ordering:
+    # 是否需要順序處理
+    required: true
+    
+    # 分區鍵（同一 partition 保證順序）
+    partition_key: "event.aggregateId"
+    
+    # 並發控制
+    concurrency:
+      max_parallel: 10
+      per_partition: 1  # 同一 partition 只有一個處理
+
+  # ---------------------------------------------------------------------------
+  # 監控與可觀測性
+  # ---------------------------------------------------------------------------
+  
+  observability:
+    metrics:
+      - name: "events_processed_total"
+        type: "counter"
+        labels: ["event_type", "status"]
+      
+      - name: "processing_duration_seconds"
+        type: "histogram"
+        buckets: [0.01, 0.05, 0.1, 0.5, 1, 5]
+      
+      - name: "retry_count"
+        type: "counter"
+        labels: ["event_type", "attempt"]
+    
+    tracing:
+      enabled: true
+      propagate_context: true
+      span_name: "reactor.{reactor_name}"
+    
+    logging:
+      level: "info"
+      include:
+        - "event_id"
+        - "aggregate_id"
+        - "processing_time"
+        - "retry_attempt"
+
+  # ---------------------------------------------------------------------------
+  # 跨 BC 依賴（若有）
+  # ---------------------------------------------------------------------------
+  
+  cross_context_calls:
+    - target_context: "{TargetBC}"
+      interface: "{ServiceInterface}"
+      acl_spec: "cross-context/{target-context}.yaml"
+      
+      # 呼叫失敗處理
+      on_failure:
+        strategy: "retry_with_dlq"  # | ignore | compensate
+
+# ---------------------------------------------------------------------------
+# Frame Concern 映射
+# ---------------------------------------------------------------------------
+
+satisfies_concerns:
+  - concern_id: FC1
+    satisfied_by:
+      - idempotency.key
+      - idempotency.storage
+    description: "確保事件只處理一次"
+  
+  - concern_id: FC2
+    satisfied_by:
+      - retry.strategy
+      - dead_letter_queue
+    description: "確保最終一致性"

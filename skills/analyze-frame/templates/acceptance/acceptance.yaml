@@ -1,0 +1,195 @@
+# ============================================================================
+# Acceptance Test Specification
+# ============================================================================
+# 
+# 驗收測試規格：BDD 格式的測試場景
+# 用於生成 ezSpec (Gherkin) .feature 檔案和測試骨架
+# ============================================================================
+
+acceptance:
+  feature: "{Feature Name}"
+  description: |
+    As a {角色}
+    I want to {動作}
+    So that {目的}
+  
+  # 與 Frame Concerns 的連結
+  validates_concerns:
+    - FC1
+    - FC2
+  
+  # ===========================================================================
+  # Happy Path Scenarios
+  # ===========================================================================
+  
+  scenarios:
+    - id: AT1
+      name: "Successfully {action}"
+      type: happy-path
+      priority: critical
+      tags:
+        - "@smoke"
+        - "@api"
+      
+      given:
+        - condition: "User is authenticated"
+          setup: "AuthFixture.authenticatedUser()"
+        
+        - condition: "{前置條件 2}"
+          setup: "{SetupMethod}"
+      
+      when:
+        - action: "User performs {action}"
+          trigger: "{UseCase}.execute(input)"
+      
+      then:
+        - expectation: "{預期結果 1}"
+          assertion: "result.id should not be null"
+        
+        - expectation: "{預期結果 2}"
+          assertion: "eventPublisher.published contains {Event}"
+      
+      validates_contracts:
+        - machine/use-case.yaml#contracts.post_conditions.POST1
+        - machine/use-case.yaml#contracts.post_conditions.POST2
+      
+      validates_invariants:
+        - controlled-domain/aggregate.yaml#invariants.shared.INV1
+
+    # =========================================================================
+    # Error Cases
+    # =========================================================================
+    
+    - id: AT2
+      name: "Fail when input is invalid"
+      type: error-case
+      priority: high
+      tags:
+        - "@validation"
+      
+      given:
+        - condition: "User is authenticated"
+        - condition: "Input has invalid data"
+      
+      when:
+        - action: "User attempts to perform {action} with invalid input"
+      
+      then:
+        - expectation: "ValidationError is thrown"
+          error_type: "ValidationError"
+        
+        - expectation: "No data is persisted"
+          assertion: "repository.count() == initialCount"
+      
+      validates_contracts:
+        - machine/use-case.yaml#contracts.pre_conditions.PRE1
+
+    - id: AT3
+      name: "Fail when user is not authorized"
+      type: error-case
+      priority: critical
+      tags:
+        - "@security"
+      
+      given:
+        - condition: "User is authenticated"
+        - condition: "User does NOT have required permission"
+      
+      when:
+        - action: "User attempts to perform {action}"
+      
+      then:
+        - expectation: "UnauthorizedError is thrown"
+          error_type: "UnauthorizedError"
+        
+        - expectation: "No data is modified"
+          assertion: "repository.findById(id) == originalState"
+      
+      validates_contracts:
+        - cross-context/authorization.yaml#required_capability.canExecute
+
+    # =========================================================================
+    # Edge Cases
+    # =========================================================================
+    
+    - id: AT4
+      name: "Handle concurrent operations"
+      type: edge-case
+      priority: high
+      tags:
+        - "@concurrency"
+      
+      given:
+        - condition: "Two users attempt the same operation simultaneously"
+      
+      when:
+        - action: "Both submit request at the same time"
+      
+      then:
+        - expectation: "Only one operation succeeds"
+        - expectation: "The other receives ConflictError or is retried"
+      
+      validates_concerns:
+        - FC2  # Concurrency concern
+
+    # =========================================================================
+    # Boundary Cases
+    # =========================================================================
+    
+    - id: AT5
+      name: "Handle maximum input size"
+      type: boundary
+      priority: medium
+      tags:
+        - "@boundary"
+      
+      given:
+        - condition: "Input is at maximum allowed size"
+      
+      when:
+        - action: "User performs {action} with maximum size input"
+      
+      then:
+        - expectation: "Operation succeeds"
+        - expectation: "All data is correctly persisted"
+
+  # ===========================================================================
+  # Test Data
+  # ===========================================================================
+  
+  test_data:
+    - name: "validInput"
+      type: "{FeatureName}Input"
+      value:
+        id: "123e4567-e89b-12d3-a456-426614174000"
+        name: "Valid Name"
+        operatorId: "user-123"
+    
+    - name: "invalidInput"
+      type: "{FeatureName}Input"
+      value:
+        id: ""
+        name: ""
+        operatorId: "user-123"
+    
+    - name: "maxSizeInput"
+      type: "{FeatureName}Input"
+      value:
+        id: "123e4567-e89b-12d3-a456-426614174000"
+        name: "A" * 100  # 100 characters
+        operatorId: "user-123"
+
+  # ===========================================================================
+  # Test Fixtures
+  # ===========================================================================
+  
+  fixtures:
+    - name: "AuthFixture"
+      methods:
+        - "authenticatedUser() -> User"
+        - "unauthorizedUser() -> User"
+    
+    - name: "{Domain}Fixture"
+      methods:
+        - "exists(id) -> {Aggregate}"
+        - "create(props) -> {Aggregate}"

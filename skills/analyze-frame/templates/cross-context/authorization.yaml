@@ -1,0 +1,166 @@
+# ============================================================================
+# Cross-Context ACL Specification
+# ============================================================================
+# 
+# Anti-Corruption Layer 規格：定義與外部 Bounded Context 的整合
+# 保護當前 BC 不被外部 BC 的模型污染
+# ============================================================================
+
+cross_context:
+  id: XC1
+  name: "Authorization"
+  
+  # ---------------------------------------------------------------------------
+  # Context 關係
+  # ---------------------------------------------------------------------------
+  
+  relationship:
+    source_context: "AccessControl"     # 提供服務的 BC
+    target_context: "{CurrentBC}"       # 當前 BC (消費者)
+    direction: "upstream-downstream"    # upstream-downstream | symmetric | separate
+    pattern: "AntiCorruptionLayer"      # AntiCorruptionLayer | Conformist | OpenHostService | SharedKernel | PublishedLanguage
+  
+  # ---------------------------------------------------------------------------
+  # 介面契約（需求層）
+  # ---------------------------------------------------------------------------
+  # 
+  # 這裡只描述「需要什麼能力」，不描述「怎麼實作」
+  # ---------------------------------------------------------------------------
+  
+  required_capability:
+    name: "AuthorizationCheck"
+    description: |
+      Check if the operator has permission to perform the action on the resource.
+      This is a synchronous call that must respond within the timeout.
+    
+    operations:
+      - name: "canExecute"
+        description: "Check if the operator can perform the action"
+        
+        input:
+          - name: "operatorId"
+            type: "string"
+            required: true
+            description: "The ID of the operator"
+          
+          - name: "action"
+            type: "ActionType"
+            required: true
+            description: "The action to perform (create, read, update, delete)"
+          
+          - name: "resourceType"
+            type: "ResourceType"
+            required: true
+            description: "The type of resource (e.g., Workflow, Board)"
+          
+          - name: "resourceId"
+            type: "string"
+            required: true
+            description: "The ID of the resource"
+        
+        output:
+          type: "AuthorizationResult"
+          properties:
+            - name: "authorized"
+              type: "boolean"
+              description: "true if authorized, false otherwise"
+            - name: "reason"
+              type: "string"
+              optional: true
+              description: "Reason for denial if not authorized"
+        
+        # Design by Contract
+        pre_conditions:
+          - "operatorId must not be empty"
+          - "action must be a valid ActionType"
+          - "resourceType must be a valid ResourceType"
+        
+        post_conditions:
+          - "returns AuthorizationResult, never throws for authorization check"
+          - "responds within timeout"
+        
+        # 異常情況
+        errors:
+          - name: "OperatorNotFoundError"
+            when: "operatorId does not exist"
+            handling: "Return { authorized: false, reason: 'Operator not found' }"
+          
+          - name: "ServiceUnavailableError"
+            when: "Authorization service is not available"
+            handling: "Apply fallback strategy"
+  
+  # ---------------------------------------------------------------------------
+  # ACL 設計（實作層）
+  # ---------------------------------------------------------------------------
+  
+  acl_design:
+    # Domain 層介面
+    adapter_interface:
+      name: "AuthorizationService"
+      location: "src/domain/services/"
+      description: "Domain layer interface, no external dependencies"
+    
+    # Infrastructure 層實作
+    adapter_implementation:
+      name: "AccessControlAuthorizationAdapter"
+      location: "src/infrastructure/acl/"
+      description: "Implements the interface, handles translation and fault tolerance"
+    
+    # 模型轉換
+    translation:
+      - source_model: "AccessControl.Permission"
+        target_model: "{CurrentBC}.AuthorizationResult"
+        mapping:
+          - "Permission.isGranted → AuthorizationResult.authorized"
+          - "Permission.denialReason → AuthorizationResult.reason"
+      
+      - source_model: "ActionType"
+        target_model: "AccessControl.PermissionAction"
+        mapping:
+          - "create → CREATE"
+          - "read → READ"
+          - "update → UPDATE"
+          - "delete → DELETE"
+  
+  # ---------------------------------------------------------------------------
+  # 容錯策略
+  # ---------------------------------------------------------------------------
+  
+  fault_tolerance:
+    timeout: "3s"
+    
+    retry:
+      max_attempts: 3
+      backoff:
+        type: "exponential"  # fixed | linear | exponential
+        initial_delay: "100ms"
+        max_delay: "1s"
+        multiplier: 2
+      retryable_errors:
+        - "NetworkError"
+        - "TimeoutError"
+      non_retryable_errors:
+        - "ValidationError"
+    
+    fallback:
+      strategy: "deny-by-default"  # deny-by-default | allow-by-default | cached
+      description: |
+        If the authorization service is unavailable after retries,
+        deny the request by default for security.
+    
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5
+      success_threshold: 2
+      reset_timeout: "30s"
+  
+  # ---------------------------------------------------------------------------
+  # 可追溯性
+  # ---------------------------------------------------------------------------
+  
+  satisfied_by:
+    - machine/use-case.yaml#contracts.pre_conditions.PRE3
+    - "src/infrastructure/acl/AccessControlAuthorizationAdapter.ts"
+  
+  validates_concerns:
+    - FC1  # 若有 Frame Concern 與權限相關
