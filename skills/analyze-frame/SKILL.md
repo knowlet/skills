@@ -53,9 +53,10 @@ description: 當接收到新需求或 Event Storming 產出後觸發。分析問
 ```
 docs/specs/{feature-name}/
 ├── frame.yaml                 # 問題框架定義 (核心)
+├── acceptance.yaml            # 驗收測試規格 (在根目錄)
 │
 ├── requirements/              # 需求層 (What) - 純業務語言
-│   └── req-1-{feature}.yaml
+│   └── cbf-req-1-{feature}.yaml
 │
 ├── machine/                   # 機器層 (How) - Application 層
 │   ├── machine.yaml           # Machine 定義
@@ -65,17 +66,19 @@ docs/specs/{feature-name}/
 ├── controlled-domain/         # 領域層 - Domain 層
 │   └── aggregate.yaml         # Aggregate + Entities + Value Objects
 │
-├── cross-context/             # 跨 Bounded Context 依賴
+├── cross-context/             # 跨 Bounded Context 依賴 (若有)
 │   └── {context-name}.yaml    # ACL 定義
 │
-├── acceptance/                # 驗收測試
-│   ├── acceptance.yaml        # 測試規格
-│   └── generated/             # AI 生成的 ezSpec
-│       └── {feature}.feature
-│
-└── runbook/
-    └── execute.md             # 執行指南
+└── runbook/                   # 執行指南 (選用)
+    └── execute.md
 ```
+
+### 命名規範
+
+- **requirements/**: `{frame-type}-req-{n}-{feature}.yaml`
+  - 範例：`cbf-req-1-create-workflow.yaml`
+  - Frame Type: `cbf` | `idf` | `rif` | `wpf` | `tf`
+- **acceptance.yaml**: 放在規格根目錄，不是子目錄
 
 ---
 

@@ -25,6 +25,7 @@ description: 代碼實作階段觸發。強制執行統一的編碼規範，支�
 | Java | 本文件 | Spring Boot / Jakarta EE |
 | TypeScript | [references/TYPESCRIPT.md](references/TYPESCRIPT.md) | Node.js / Deno / Bun |
 | Go | [references/GOLANG.md](references/GOLANG.md) | Standard Go Project Layout |
+| Rust | [references/RUST.md](references/RUST.md) | Cargo / Tokio async runtime |
 
 ## Claude Code Sub-agent 整合
 

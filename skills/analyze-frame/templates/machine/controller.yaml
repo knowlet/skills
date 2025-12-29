@@ -1,0 +1,204 @@
+# Machine 層：Controller 規格 (API 入口)
+# 此為 TEMPLATE，請根據實際需求修改
+
+controller:
+  name: "{Feature}Controller"
+  type: rest  # | graphql | grpc
+  
+  # ---------------------------------------------------------------------------
+  # API Endpoint 定義
+  # ---------------------------------------------------------------------------
+  
+  endpoints:
+    - name: "{action}{Entity}"
+      method: POST  # | GET | PUT | PATCH | DELETE
+      path: "/api/v1/{entities}"
+      
+      # 請求規格
+      request:
+        headers:
+          - name: "Authorization"
+            type: "Bearer Token"
+            required: true
+          - name: "X-Idempotency-Key"
+            type: "UUID"
+            required: false
+            description: "用於冪等性處理"
+        
+        body:
+          content_type: "application/json"
+          schema:
+            type: object
+            properties:
+              "{parentId}":
+                type: string
+                format: uuid
+                required: true
+              "{name}":
+                type: string
+                minLength: 1
+                maxLength: 255
+                required: true
+        
+        # 請求範例
+        example:
+          "{parentId}": "parent-001"
+          "{name}": "My Entity"
+      
+      # 回應規格
+      responses:
+        - status: 201
+          description: "Created successfully"
+          body:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                "{parentId}":
+                  type: string
+                  format: uuid
+                "{name}":
+                  type: string
+                createdAt:
+                  type: string
+                  format: date-time
+            example:
+              id: "entity-001"
+              "{parentId}": "parent-001"
+              "{name}": "My Entity"
+              createdAt: "2024-01-15T10:30:00Z"
+        
+        - status: 400
+          description: "Validation error"
+          body:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                code:
+                  type: string
+                details:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                      message:
+                        type: string
+        
+        - status: 401
+          description: "Unauthorized"
+        
+        - status: 403
+          description: "Forbidden - not authorized for this action"
+        
+        - status: 409
+          description: "Conflict - duplicate idempotency key"
+
+  # ---------------------------------------------------------------------------
+  # 輸入驗證
+  # ---------------------------------------------------------------------------
+  
+  validation:
+    strategy: "fail-fast"  # | collect-all
+    
+    rules:
+      - field: "{parentId}"
+        rules:
+          - type: "required"
+            message: "{parentId} is required"
+          - type: "uuid"
+            message: "{parentId} must be a valid UUID"
+      
+      - field: "{name}"
+        rules:
+          - type: "required"
+            message: "{name} is required"
+          - type: "minLength"
+            value: 1
+            message: "{name} cannot be empty"
+          - type: "maxLength"
+            value: 255
+            message: "{name} cannot exceed 255 characters"
+
+  # ---------------------------------------------------------------------------
+  # 安全性
+  # ---------------------------------------------------------------------------
+  
+  security:
+    authentication:
+      type: "bearer"
+      scheme: "JWT"
+    
+    authorization:
+      check_before: "usecase"
+      capability: "{action}_{entity}"
+      resource: "{parentId}"
+
+  # ---------------------------------------------------------------------------
+  # 錯誤處理
+  # ---------------------------------------------------------------------------
+  
+  error_handling:
+    # Domain 錯誤對應 HTTP Status
+    mapping:
+      - domain_error: "ValidationError"
+        http_status: 400
+        code: "VALIDATION_ERROR"
+      
+      - domain_error: "AuthorizationError"
+        http_status: 403
+        code: "FORBIDDEN"
+      
+      - domain_error: "NotFoundError"
+        http_status: 404
+        code: "NOT_FOUND"
+      
+      - domain_error: "ConflictError"
+        http_status: 409
+        code: "CONFLICT"
+      
+      - domain_error: "DomainRuleViolation"
+        http_status: 422
+        code: "UNPROCESSABLE_ENTITY"
+    
+    # 未預期錯誤
+    fallback:
+      http_status: 500
+      code: "INTERNAL_ERROR"
+      message: "An unexpected error occurred"
+      log_level: "error"
+
+  # ---------------------------------------------------------------------------
+  # 可觀測性
+  # ---------------------------------------------------------------------------
+  
+  observability:
+    # 存取日誌
+    access_log:
+      enabled: true
+      include:
+        - "method"
+        - "path"
+        - "status"
+        - "duration"
+        - "user_id"
+    
+    # 追蹤
+    tracing:
+      enabled: true
+      propagate: ["traceparent", "tracestate"]
+    
+    # 指標
+    metrics:
+      - name: "http_requests_total"
+        type: "counter"
+        labels: ["method", "path", "status"]
+      
+      - name: "http_request_duration_seconds"
+        type: "histogram"
+        buckets: [0.01, 0.05, 0.1, 0.5, 1, 5]

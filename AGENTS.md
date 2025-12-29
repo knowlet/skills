@@ -41,11 +41,15 @@ This project contains Agent Skills based on **Problem Frames** methodology for r
 ```
 docs/specs/{feature-name}/
 ├── frame.yaml                 # Problem frame definition
+├── acceptance.yaml            # Acceptance criteria (at root)
 ├── requirements/              # Requirements layer (What)
+│   └── cbf-req-1-{feature}.yaml
 ├── machine/                   # Machine layer (How - Application)
+│   ├── machine.yaml
+│   ├── controller.yaml
+│   └── use-case.yaml
 ├── controlled-domain/         # Domain layer (DDD)
 ├── cross-context/             # Cross-BC dependencies (ACL)
-├── acceptance/                # Acceptance tests
 └── runbook/                   # Execution guide
 ```
 
@@ -108,12 +112,14 @@ The `analyze-frame` skill provides YAML templates:
 | Template | Purpose |
 |----------|---------|
 | `frame.yaml` | Problem Frame definition |
+| `acceptance.yaml` | Acceptance criteria (Gherkin-like, ezSpec compatible) |
 | `requirements/req-template.yaml` | Requirement specification |
+| `machine/machine.yaml` | Machine definition |
+| `machine/controller.yaml` | API Controller specification |
 | `machine/use-case.yaml` | Use Case (CBF) |
 | `machine/query.yaml` | Query (IDF) |
 | `machine/reactor.yaml` | Reactor (RIF) |
 | `controlled-domain/aggregate.yaml` | Aggregate with invariants |
-| `acceptance/acceptance.yaml` | BDD test scenarios |
 | `cross-context/authorization.yaml` | ACL specification |
 | `runbook/execute.md` | Execution guide |
 
@@ -126,6 +132,16 @@ Templates location: `~/.claude/skills/analyze-frame/templates/`
 | Java | `coding-standards/SKILL.md` |
 | TypeScript | `coding-standards/references/TYPESCRIPT.md` |
 | Go | `coding-standards/references/GOLANG.md` |
+| Rust | `coding-standards/references/RUST.md` |
+
+### BDD Frameworks
+
+| Language | Framework | Step Definition |
+|----------|-----------|-----------------|
+| Java | ezSpec | Auto-generated (Fluent API) |
+| Go | Ginkgo + Gomega | Built-in BDD style |
+| TypeScript | Cucumber.js / Jest-Cucumber | Manual / Auto |
+| Rust | cucumber-rs | Macro-assisted |
 
 ## Usage in Claude Code
 

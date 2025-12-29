@@ -1,0 +1,147 @@
+# Machine 層：Machine 定義
+# 此為 TEMPLATE，請根據實際需求修改
+#
+# Machine 是 Problem Frames 中的核心概念，代表「要建造的系統」
+# 它連接 Operator、Controlled Domain，並滿足 Frame Concerns
+
+machine:
+  name: "{Feature}Machine"
+  version: "1.0.0"
+  
+  # ---------------------------------------------------------------------------
+  # Machine 組成元件
+  # ---------------------------------------------------------------------------
+  
+  components:
+    # API 入口層
+    controller:
+      spec: "controller.yaml"
+      responsibility: "處理 HTTP 請求，驗證輸入，轉換為 Use Case Input"
+    
+    # 應用層
+    use_case:
+      spec: "use-case.yaml"
+      responsibility: "協調業務流程，執行交易，發布事件"
+    
+    # 領域層（引用）
+    aggregate:
+      spec: "../controlled-domain/aggregate.yaml"
+      responsibility: "維護業務不變量，執行領域邏輯"
+
+  # ---------------------------------------------------------------------------
+  # Machine 行為規範
+  # ---------------------------------------------------------------------------
+  
+  behavior:
+    # 觸發條件
+    trigger:
+      type: "operator_command"  # | scheduled | event
+      source: "REST API"
+      description: "當 Operator 透過 API 發送命令時觸發"
+    
+    # 處理流程
+    flow:
+      - step: 1
+        name: "Authenticate & Authorize"
+        component: "controller"
+        action: "驗證 JWT token，檢查授權"
+      
+      - step: 2
+        name: "Validate Input"
+        component: "controller"
+        action: "驗證請求參數格式與內容"
+      
+      - step: 3
+        name: "Execute Use Case"
+        component: "use_case"
+        action: "執行業務邏輯，操作 Aggregate"
+      
+      - step: 4
+        name: "Persist & Publish"
+        component: "use_case"
+        action: "儲存狀態變更，發布 Domain Event"
+      
+      - step: 5
+        name: "Return Response"
+        component: "controller"
+        action: "轉換結果為 HTTP Response"
+
+  # ---------------------------------------------------------------------------
+  # 與 Controlled Domain 的介面
+  # ---------------------------------------------------------------------------
+  
+  domain_interface:
+    # 操作的 Aggregate
+    aggregates:
+      - name: "{Aggregate}"
+        operations:
+          - "create"
+          - "update"
+          - "delete"
+    
+    # 使用的 Repository
+    repositories:
+      - name: "{Aggregate}Repository"
+        methods:
+          - "save"
+          - "findById"
+          - "findByParentId"
+    
+    # 發布的 Domain Events
+    domain_events:
+      - "{Aggregate}CreatedEvent"
+      - "{Aggregate}UpdatedEvent"
+      - "{Aggregate}DeletedEvent"
+
+  # ---------------------------------------------------------------------------
+  # 跨 BC 依賴
+  # ---------------------------------------------------------------------------
+  
+  external_dependencies:
+    - context: "AccessControl"
+      interface: "AuthorizationService"
+      acl_spec: "../cross-context/authorization.yaml"
+      purpose: "檢查使用者是否有權限執行操作"
+      
+      # 失敗處理
+      on_failure:
+        strategy: "fail"  # | fallback | retry
+        error: "AuthorizationError"
+
+  # ---------------------------------------------------------------------------
+  # 品質屬性
+  # ---------------------------------------------------------------------------
+  
+  quality_attributes:
+    # 效能
+    performance:
+      target_latency_p99: "500ms"
+      target_throughput: "100 rps"
+    
+    # 可靠性
+    reliability:
+      error_budget: "99.9%"
+      retry_policy: "use_case level"
+    
+    # 可觀測性
+    observability:
+      logging: "structured"
+      tracing: "distributed"
+      metrics: "prometheus"
+
+  # ---------------------------------------------------------------------------
+  # Frame Concerns 映射
+  # ---------------------------------------------------------------------------
+  
+  satisfies_concerns:
+    - concern_id: FC1
+      satisfied_by:
+        - "controller.yaml#security.authorization"
+        - "use-case.yaml#dependencies.authorization_service"
+      description: "授權檢查在 Controller 和 Use Case 兩層實現"
+    
+    - concern_id: FC2
+      satisfied_by:
+        - "controller.yaml#observability"
+        - "use-case.yaml#observability"
+      description: "可觀測性在各層都有實現"

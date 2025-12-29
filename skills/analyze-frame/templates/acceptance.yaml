@@ -1,0 +1,203 @@
+# Acceptance Criteria 驗收條件
+# 此為 TEMPLATE，請根據實際需求修改
+# 
+# 說明：
+# - 使用類似 Gherkin 的 given/when/then 語法
+# - AI 會自動產生 ezSpec step definition（開發人員不需要手寫）
+# - 驗收測試規格即為 Executable Specification
+
+acceptance_criteria:
+
+  # ---------------------------------------------------------------------------
+  # Happy Path - 成功場景
+  # ---------------------------------------------------------------------------
+  
+  - id: AC1
+    type: business          # business | technical | edge-case
+    test_tier: usecase      # usecase | integration | e2e
+    name: "{Feature} successfully"
+    
+    # 追溯連結
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - FC1               # e.g., Authorization
+        - FC2               # e.g., Observability & Auditability
+    
+    # 連結到生成的測試
+    tests_anchor:
+      - tests#success
+      - tests#event-published
+    
+    # Given-When-Then 規格
+    given:
+      - "A {entityId} <{entityId}> is provided (existence is NOT synchronously validated in this bounded context)"
+      - "A user <userId> is authorized to {action} for that {entityId}"
+    
+    when:
+      - "The user requests to {action} with {entityId} <{entityId}> and {param} <{param}>"
+    
+    then:
+      - "The request succeeds"
+      - "A {Entity} is created and belongs to {Parent} <{entityId}>"
+      - "The {Entity} has {attribute} <{param}>"
+      - "The {Entity} is active (not deleted)"
+      - "The {Entity} starts in an empty structure state (no {children} configured yet)"
+    
+    and:
+      - "A {Entity}Created domain event is published for downstream consumers"
+    
+    # 測試資料範例
+    examples:
+      - "{entityId}": "{entity}-001"
+        userId: "user-123"
+        "{param}": "First {entity}"
+
+  # ---------------------------------------------------------------------------
+  # Error Cases - 錯誤場景
+  # ---------------------------------------------------------------------------
+  
+  - id: AC2
+    type: business
+    test_tier: usecase
+    name: "Reject {action} when not authorized"
+    
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - FC1               # Authorization
+    
+    tests_anchor:
+      - tests#unauthorized
+    
+    given:
+      - "A {entityId} <{entityId}> is provided"
+      - "A user <userId> is NOT authorized to {action} for that {entityId}"
+    
+    when:
+      - "The user requests to {action} with {entityId} <{entityId}>"
+    
+    then:
+      - "The request fails with AuthorizationError"
+      - "No {Entity} is created"
+      - "No domain event is published"
+    
+    examples:
+      - "{entityId}": "{entity}-001"
+        userId: "unauthorized-user"
+
+  - id: AC3
+    type: business
+    test_tier: usecase
+    name: "Reject {action} with invalid input"
+    
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - FC3               # Input Validation
+    
+    tests_anchor:
+      - tests#validation-error
+    
+    given:
+      - "A user <userId> is authorized to {action}"
+    
+    when:
+      - "The user requests to {action} with empty {param}"
+    
+    then:
+      - "The request fails with ValidationError"
+      - "Error message indicates '{param} is required'"
+    
+    examples:
+      - userId: "user-123"
+        "{param}": ""
+
+  # ---------------------------------------------------------------------------
+  # Edge Cases - 邊界場景
+  # ---------------------------------------------------------------------------
+  
+  - id: AC4
+    type: edge-case
+    test_tier: usecase
+    name: "Idempotent {action} with same idempotency key"
+    
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - FC4               # Idempotency
+    
+    tests_anchor:
+      - tests#idempotency
+    
+    given:
+      - "A {Entity} was already created with idempotency key <idempotencyKey>"
+    
+    when:
+      - "The user requests to {action} again with the same idempotency key <idempotencyKey>"
+    
+    then:
+      - "The request succeeds (idempotent)"
+      - "The same {Entity} is returned"
+      - "No duplicate {Entity} is created"
+      - "No duplicate domain event is published"
+    
+    examples:
+      - idempotencyKey: "idem-key-001"
+
+  # ---------------------------------------------------------------------------
+  # Technical Scenarios - 技術場景
+  # ---------------------------------------------------------------------------
+  
+  - id: AC5
+    type: technical
+    test_tier: integration
+    name: "Domain event is persisted in outbox"
+    
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - FC5               # Event Reliability
+    
+    tests_anchor:
+      - tests#outbox
+    
+    given:
+      - "The system is configured with outbox pattern"
+    
+    when:
+      - "A {Entity} is successfully created"
+    
+    then:
+      - "The {Entity}Created event is stored in outbox table"
+      - "The event and aggregate are in the same transaction"
+    
+    and:
+      - "The outbox processor publishes the event to message broker"
+
+# ---------------------------------------------------------------------------
+# ezSpec Generation Hints
+# ---------------------------------------------------------------------------
+
+ezspec_generation:
+  # 生成的測試類別
+  test_class: "{Feature}AcceptanceTest"
+  
+  # 使用的 fixture
+  fixtures:
+    - "{Feature}TestFixture"
+    - "AuthorizationTestFixture"
+  
+  # 共享的 setup
+  shared_setup:
+    - "Initialize test database"
+    - "Reset event store"
+    - "Configure mock authorization service"
+  
+  # 測試資料工廠
+  test_data_factory: "{Feature}TestDataFactory"

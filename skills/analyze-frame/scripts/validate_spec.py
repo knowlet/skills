@@ -411,19 +411,19 @@ class SpecValidator:
     
     def _validate_acceptance(self):
         """驗證驗收測試"""
-        acceptance_dir = self.spec_dir / "acceptance"
-        if not acceptance_dir.exists():
-            self.result.add_warning(
-                "acceptance/",
-                "Acceptance directory not found"
-            )
-            return
+        # 新結構：acceptance.yaml 在根目錄
+        acceptance_file = self.spec_dir / "acceptance.yaml"
         
-        acceptance_file = acceptance_dir / "acceptance.yaml"
+        # 向下相容：也支援舊結構 acceptance/acceptance.yaml
+        if not acceptance_file.exists():
+            acceptance_dir = self.spec_dir / "acceptance"
+            if acceptance_dir.exists():
+                acceptance_file = acceptance_dir / "acceptance.yaml"
+        
         if not acceptance_file.exists():
             self.result.add_warning(
-                "acceptance/acceptance.yaml",
-                "Acceptance specification not found"
+                "acceptance.yaml",
+                "Acceptance specification not found (expected at root level)"
             )
             return
         
@@ -433,7 +433,7 @@ class SpecValidator:
                 data = yaml.safe_load(f)
         except yaml.YAMLError as e:
             self.result.add_error(
-                "acceptance/acceptance.yaml",
+                str(acceptance_file.relative_to(self.spec_dir)),
                 f"Invalid YAML syntax: {e}"
             )
             return
@@ -441,28 +441,44 @@ class SpecValidator:
         if not data:
             return
         
-        acceptance = data.get("acceptance", data)
-        scenarios = acceptance.get("scenarios", [])
+        # 支援新格式 (acceptance_criteria) 和舊格式 (acceptance.scenarios)
+        acceptance_criteria = data.get("acceptance_criteria", [])
+        if not acceptance_criteria:
+            acceptance = data.get("acceptance", data)
+            acceptance_criteria = acceptance.get("scenarios", [])
         
-        if not scenarios:
+        if not acceptance_criteria:
             self.result.add_warning(
-                "acceptance/acceptance.yaml",
-                "No test scenarios defined"
+                str(acceptance_file.relative_to(self.spec_dir)),
+                "No acceptance criteria (scenarios) defined"
             )
             return
         
         # 檢查場景類型覆蓋
-        types = [s.get("type") for s in scenarios]
-        if "happy-path" not in types:
+        types = [s.get("type") for s in acceptance_criteria]
+        if "business" not in types and "happy-path" not in types:
             self.result.add_warning(
-                "acceptance/acceptance.yaml",
-                "No happy-path scenario defined"
+                str(acceptance_file.relative_to(self.spec_dir)),
+                "No business (happy-path) scenario defined"
             )
-        if "error-case" not in types:
-            self.result.add_warning(
-                "acceptance/acceptance.yaml",
-                "No error-case scenario defined"
-            )
+        
+        # 檢查新格式的必要欄位
+        for ac in acceptance_criteria:
+            ac_id = ac.get("id", "unknown")
+            
+            # 檢查 trace 連結
+            if "trace" not in ac:
+                self.result.add_warning(
+                    str(acceptance_file.relative_to(self.spec_dir)),
+                    f"Acceptance criteria {ac_id} missing 'trace' links to requirements/frame_concerns"
+                )
+            
+            # 檢查 given/when/then 格式
+            if "given" not in ac or "when" not in ac or "then" not in ac:
+                self.result.add_warning(
+                    str(acceptance_file.relative_to(self.spec_dir)),
+                    f"Acceptance criteria {ac_id} missing given/when/then structure"
+                )
         
         # 檢查是否涵蓋所有 Frame Concerns
         if self.frame_data:
@@ -470,14 +486,20 @@ class SpecValidator:
             fc_ids = {fc.get("id") for fc in frame_concerns}
             
             validated_concerns = set()
-            for scenario in scenarios:
-                for vc in scenario.get("validates_concerns", []):
+            for ac in acceptance_criteria:
+                # 新格式：trace.frame_concerns
+                trace = ac.get("trace", {})
+                for fc in trace.get("frame_concerns", []):
+                    validated_concerns.add(fc)
+                
+                # 舊格式：validates_concerns
+                for vc in ac.get("validates_concerns", []):
                     validated_concerns.add(vc)
             
             missing = fc_ids - validated_concerns
             if missing:
                 self.result.add_warning(
-                    "acceptance/acceptance.yaml",
+                    str(acceptance_file.relative_to(self.spec_dir)),
                     f"Frame concerns not covered by tests: {', '.join(missing)}"
                 )
 

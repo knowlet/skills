@@ -1,6 +1,6 @@
 ---
 name: generate-acceptance-test
-description: 從規格目錄的 acceptance.yaml 生成/維護 BDD/ezSpec 測試。支援 Gherkin 語法，確保「規格即測試」，並與 Frame Concerns 建立可追溯連結。
+description: 從規格目錄的 acceptance.yaml 生成/維護 BDD/ezSpec 測試。使用類似 Gherkin 語法，AI 自動產生 step definition（開發人員不需要手寫），驗收測試規格即為 Executable Specification。
 ---
 
 # Generate Acceptance Test Skill
@@ -8,146 +8,195 @@ description: 從規格目錄的 acceptance.yaml 生成/維護 BDD/ezSpec 測試�
 ## 觸發時機
 
 - analyze-frame 產生規格目錄後
-- acceptance/acceptance.yaml 更新時
+- acceptance.yaml 更新時
 - 需求異動需同步更新驗收測試時
 - 代碼生成前，希望先鎖定可執行的驗收測試
 
 ## 核心任務
 
-1. 解析 acceptance/acceptance.yaml 的測試規格
-2. 生成 ezSpec (Gherkin) 格式的 .feature 檔案
+1. 解析 acceptance.yaml 的測試規格
+2. **自動生成 ezSpec step definition（開發人員不需要手寫）**
 3. 維護規格與測試的一致性
 4. 建立與 Frame Concerns 的可追溯連結
 
 ---
 
-## 規格目錄結構
+## 關鍵概念
+
+### Executable Specification
+
+- 驗收測試規格 = 可執行的規格
+- 使用類似 Gherkin 的 `given/when/then` 語法
+- AI 自動生成 step definition，開發人員不需要手寫
+- 規格變更時，測試自動同步
+
+### 目錄結構
 
 ```
 docs/specs/{feature-name}/
 ├── frame.yaml
-├── acceptance/
-│   ├── acceptance.yaml        # 測試規格 (輸入)
-│   └── generated/
-│       └── {feature}.feature  # ezSpec 輸出
+├── acceptance.yaml            # 測試規格 (輸入) - 在根目錄
+├── requirements/
+│   └── cbf-req-1-{feature}.yaml
+├── machine/
+│   ├── controller.yaml
+│   ├── machine.yaml
+│   └── use-case.yaml
+├── controlled-domain/
+│   └── aggregate.yaml
 └── ...
 ```
 
 ---
 
-## acceptance/acceptance.yaml 格式
+## acceptance.yaml 格式
 
 ```yaml
-# docs/specs/{feature-name}/acceptance/acceptance.yaml
-acceptance:
-  feature: "{Feature Name}"
-  description: |
-    {Feature 描述，可對應 User Story}
-  
-  # 與 Frame Concerns 的連結
-  validates_concerns:
-    - FC1
-    - FC2
-  
+# docs/specs/{feature-name}/acceptance.yaml
+# 注意：放在規格根目錄，不是 acceptance/ 子目錄
+
+acceptance_criteria:
+
   # ---------------------------------------------------------------------------
-  # 測試場景
+  # Happy Path - 成功場景
   # ---------------------------------------------------------------------------
   
-  scenarios:
-    - id: AT1
-      name: "Successfully create workflow"
-      type: happy-path  # | error-case | edge-case | boundary
-      priority: critical  # | high | medium | low
-      tags:
-        - "@smoke"
-        - "@api"
-      
-      # BDD 格式
-      given:
-        - condition: "User is authenticated"
-          setup: "AuthFixture.authenticatedUser()"
-        - condition: "User is a board member"
-          setup: "BoardFixture.memberOf(boardId)"
-        - condition: "Board exists with id 'board-123'"
-          setup: "BoardFixture.exists(boardId)"
-      
-      when:
-        - action: "User creates workflow with name 'Sprint 1'"
-          trigger: "CreateWorkflowUseCase.execute(input)"
-      
-      then:
-        - expectation: "Workflow is created with generated ID"
-          assertion: "result.workflowId should not be null"
-        - expectation: "WorkflowCreated event is published"
-          assertion: "eventPublisher.published contains WorkflowCreatedEvent"
-      
-      # 連結到契約
-      validates_contracts:
-        - machine/use-case.yaml#contracts.post_conditions.POST1
-      
-      # 連結到 invariants
-      validates_invariants:
-        - controlled-domain/aggregate.yaml#invariants.shared.INV1
+  - id: AC1
+    type: business          # business | technical | edge-case
+    test_tier: usecase      # usecase | integration | e2e
+    name: "Create a valid workflow (board existence is not synchronously validated)"
     
-    # -------------------------------------------------------------------------
-    # Error Cases
-    # -------------------------------------------------------------------------
+    # 追溯連結
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - WF-FC-AUTH        # Authorization
+        - FC2               # Observability & Auditability
     
-    - id: AT2
-      name: "Fail when user is not authorized"
-      type: error-case
-      priority: critical
-      tags:
-        - "@security"
-      
-      given:
-        - condition: "User is authenticated"
-        - condition: "User is NOT a board member"
-      
-      when:
-        - action: "User attempts to create workflow"
-      
-      then:
-        - expectation: "UnauthorizedError is thrown"
-          error_type: "UnauthorizedError"
-        - expectation: "No workflow is created"
-          assertion: "workflowRepository.count() == 0"
-      
-      validates_contracts:
-        - cross-context/authorization.yaml#required_capability
+    # 連結到生成的測試
+    tests_anchor:
+      - tests#success
+      - tests#event-published
     
-    # -------------------------------------------------------------------------
-    # Edge Cases
-    # -------------------------------------------------------------------------
+    # Given-When-Then 規格
+    given:
+      - "A boardId <boardId> is provided (existence is NOT synchronously validated in this bounded context)"
+      - "A user <userId> is authorized to create workflows for that boardId"
     
-    - id: AT3
-      name: "Handle concurrent workflow creation"
-      type: edge-case
-      priority: high
-      tags:
-        - "@concurrency"
-      
-      given:
-        - condition: "Two users attempt to create workflow simultaneously"
-      
-      when:
-        - action: "Both submit create workflow request at the same time"
-      
-      then:
-        - expectation: "Only one workflow is created"
-        - expectation: "The other request receives ConflictError"
-      
-      validates_concerns:
-        - FC2  # Concurrency concern
-  
+    when:
+      - "The user requests to create a workflow with boardId <boardId> and name <workflowName>"
+    
+    then:
+      - "The request succeeds"
+      - "A Workflow is created and belongs to Board <boardId>"
+      - "The Workflow has name <workflowName>"
+      - "The Workflow is active (not deleted)"
+      - "The Workflow starts in an empty structure state (no stages/lanes configured yet)"
+    
+    and:
+      - "A WorkflowCreated domain event is published for downstream consumers"
+    
+    # 測試資料範例
+    examples:
+      - boardId: "board-001"
+        userId: "user-123"
+        workflowName: "First workflow"
+
   # ---------------------------------------------------------------------------
-  # 測試資料
+  # Error Cases
   # ---------------------------------------------------------------------------
   
-  test_data:
-    - name: "validWorkflowInput"
-      type: "CreateWorkflowInput"
-      value:
+  - id: AC2
+    type: business
+    test_tier: usecase
+    name: "Reject workflow creation when not authorized"
+    
+    trace:
+      requirement:
+        - CBF-REQ-1
+      frame_concerns:
+        - WF-FC-AUTH
+    
+    tests_anchor:
+      - tests#unauthorized
+    
+    given:
+      - "A boardId <boardId> is provided"
+      - "A user <userId> is NOT authorized to create workflows for that boardId"
+    
+    when:
+      - "The user requests to create a workflow with boardId <boardId>"
+    
+    then:
+      - "The request fails with AuthorizationError"
+      - "No Workflow is created"
+      - "No domain event is published"
+    
+    examples:
+      - boardId: "board-001"
+        userId: "unauthorized-user"
+```
+
+---
+
+## ezSpec Java 生成（Fluent API）
+
+AI 自動生成的 ezSpec 測試，開發人員**不需要手寫 step definition**：
+
+```java
+// tests/acceptance/CreateWorkflowAcceptanceTest.java
+// Auto-generated from acceptance.yaml
+
+/**
+ * AC1: Create a valid workflow successfully
+ * Validates:
+ * - then: workflow is created with correct boardId
+ * - then: workflow is not deleted (isDeleted = false)
+ * - then: workflow has no lanes/stages initially
+ * - then: WorkflowCreated event is published
+ */
+@EzScenario(rule = SUCCESSFUL_CREATION_RULE)
+public void should_create_workflow_successfully() {
+    feature.newScenario()
+        .Given("a user wants to create a workflow for a board", ScenarioEnvironment env -> {
+            String workflowId = UUID.randomUUID().toString();
+            String boardId = UUID.randomUUID().toString();
+            String userId = "test-user";
+
+            env.put("workflowId", workflowId)
+               .put("boardId", boardId)
+               .put("userId", userId)
+               .put("name", "Development Workflow");
+        })
+        .When("the workflow is created", ScenarioEnvironment env -> {...})
+        .ThenSuccess(ScenarioEnvironment env -> {...})
+        .And("the workflow should be persisted with correct boardId", ScenarioEnvironment env -> {...})
+        .And("the workflow should not be deleted", ScenarioEnvironment env -> {...})
+        .And("the workflow should have no root stages initially", ScenarioEnvironment env -> {...})
+        .And("a WorkflowCreated event should be published", ScenarioEnvironment env -> {
+            await().atMost(timeout: 5, TimeUnit.SECONDS).untilAsserted(() -> {
+                assertThat(notifyFakeHandleAllEventsService.getHandledEventsSize()).isEqualTo(expected: 1);
+                assertThat(notifyFakeHandleAllEventsService.handledEventTimes(WorkflowEvents.WorkflowCreated.class)).isEqualTo(1);
+            });
+
+            WorkflowEvents.WorkflowCreated event = (WorkflowEvents.WorkflowCreated) notifyFakeHandleAllEventsService.getEvent(0);
+            var input = env.get("input", CreateWorkflowInput.class);
+            assertThat(event.workflowId().value()).isEqualTo(input.workflowId);
+            assertThat(event.boardId().value()).isEqualTo(input.boardId);
+            assertThat(event.name()).isEqualTo(input.name);
+        })
+        .Execute();
+}
+```
+
+### ezSpec 生成規則
+
+1. **方法命名**：`should_{action}_{outcome}` 格式
+2. **JavaDoc 註解**：包含 AC ID 和 Validates 項目
+3. **Fluent API**：`.Given()` → `.When()` → `.ThenSuccess()` / `.ThenFailure()` → `.And()` → `.Execute()`
+4. **Lambda 環境**：使用 `ScenarioEnvironment` 傳遞狀態
+5. **事件驗證**：使用 `await().atMost()` 處理非同步事件
         boardId: "board-123"
         name: "Sprint 1"
         operatorId: "user-456"
@@ -162,54 +211,111 @@ acceptance:
 
 ---
 
-## 生成的 ezSpec (Gherkin) 格式
+## Error Case ezSpec 範例
+
+```java
+/**
+ * AC2: Reject workflow creation when not authorized
+ * Validates:
+ * - frame_concerns: WF-FC-AUTH
+ */
+@EzScenario(rule = AUTHORIZATION_RULE)
+public void should_reject_when_not_authorized() {
+    feature.newScenario()
+        .Given("a user is not authorized to create workflows", ScenarioEnvironment env -> {
+            String boardId = UUID.randomUUID().toString();
+            String userId = "unauthorized-user";
+            
+            // Mock authorization service to deny
+            when(authorizationService.hasCapability(userId, "create_workflow", boardId))
+                .thenReturn(false);
+            
+            env.put("boardId", boardId)
+               .put("userId", userId);
+        })
+        .When("the user attempts to create a workflow", ScenarioEnvironment env -> {
+            var input = CreateWorkflowInput.builder()
+                .boardId(env.get("boardId", String.class))
+                .name("Test Workflow")
+                .operatorId(env.get("userId", String.class))
+                .build();
+            env.put("input", input);
+            
+            try {
+                useCase.execute(input);
+                env.put("error", null);
+            } catch (Exception e) {
+                env.put("error", e);
+            }
+        })
+        .ThenFailure(AuthorizationException.class, ScenarioEnvironment env -> {
+            var error = env.get("error", Exception.class);
+            assertThat(error).isInstanceOf(AuthorizationException.class);
+        })
+        .And("no workflow should be created", ScenarioEnvironment env -> {
+            var input = env.get("input", CreateWorkflowInput.class);
+            var workflow = workflowRepository.findById(WorkflowId.of(input.workflowId));
+            assertThat(workflow).isEmpty();
+        })
+        .And("no domain event should be published", ScenarioEnvironment env -> {
+            assertThat(notifyFakeHandleAllEventsService.getHandledEventsSize()).isEqualTo(0);
+        })
+        .Execute();
+}
+```
+
+---
+
+## 生成的 Gherkin .feature 檔案
 
 ```gherkin
-# docs/specs/{feature-name}/acceptance/generated/{feature}.feature
+# docs/specs/create-workflow/generated/create-workflow.feature
 # Auto-generated from acceptance.yaml - DO NOT EDIT DIRECTLY
 # Last generated: {ISO-8601}
-# Validates: FC1, FC2
+# Validates: WF-FC-AUTH, FC2
 
-@feature-{feature-name}
-Feature: {Feature Name}
-  {Feature 描述}
-
-  Background:
-    Given the system is initialized
-    And test fixtures are prepared
+@feature-create-workflow
+Feature: Create Workflow
+  As a board member
+  I want to create a workflow for my board
+  So that I can organize my work into stages and lanes
 
   # ===== Happy Path =====
   
-  @smoke @api @AT1
-  Scenario: Successfully create workflow
-    # Validates: POST1, INV1
-    Given User is authenticated
-    And User is a board member
-    And Board exists with id "board-123"
-    When User creates workflow with name "Sprint 1"
-    Then Workflow is created with generated ID
-    And WorkflowCreated event is published
+  @smoke @api @AC1
+  Scenario Outline: Create a valid workflow successfully
+    # Trace: CBF-REQ-1
+    # Frame Concerns: WF-FC-AUTH, FC2
+    Given A boardId <boardId> is provided (existence is NOT synchronously validated in this bounded context)
+    And A user <userId> is authorized to create workflows for that boardId
+    When The user requests to create a workflow with boardId <boardId> and name <workflowName>
+    Then The request succeeds
+    And A Workflow is created and belongs to Board <boardId>
+    And The Workflow has name <workflowName>
+    And The Workflow is active (not deleted)
+    And The Workflow starts in an empty structure state (no stages/lanes configured yet)
+    And A WorkflowCreated domain event is published for downstream consumers
+
+    Examples:
+      | boardId   | userId   | workflowName   |
+      | board-001 | user-123 | First workflow |
 
   # ===== Error Cases =====
   
-  @security @AT2
-  Scenario: Fail when user is not authorized
-    # Validates: XC1 (Authorization)
-    Given User is authenticated
-    But User is NOT a board member
-    When User attempts to create workflow
-    Then UnauthorizedError is thrown
-    And No workflow is created
+  @security @AC2
+  Scenario Outline: Reject workflow creation when not authorized
+    # Trace: CBF-REQ-1
+    # Frame Concerns: WF-FC-AUTH
+    Given A boardId <boardId> is provided
+    And A user <userId> is NOT authorized to create workflows for that boardId
+    When The user requests to create a workflow with boardId <boardId>
+    Then The request fails with AuthorizationError
+    And No Workflow is created
+    And No domain event is published
 
-  # ===== Edge Cases =====
-  
-  @concurrency @AT3
-  Scenario: Handle concurrent workflow creation
-    # Validates: FC2 (Concurrency)
-    Given Two users attempt to create workflow simultaneously
-    When Both submit create workflow request at the same time
-    Then Only one workflow is created
-    And The other request receives ConflictError
+    Examples:
+      | boardId   | userId            |
+      | board-001 | unauthorized-user |
 ```
 
 ---
@@ -536,17 +642,623 @@ sync_report:
 
 ---
 
+## BDD 框架支援
+
+本 Skill 支援以下語言與 BDD 框架：
+
+| 語言 | 框架 | 特點 |
+|------|------|------|
+| Java | ezSpec | Fluent API, 無需 step definition |
+| Go | Ginkgo + Gomega | BDD 風格, 表格驅動測試 |
+| TypeScript | Cucumber.js / Jest-Cucumber | Gherkin 原生支援 |
+| Rust | cucumber-rs | Async 支援, 宏輔助 |
+
+---
+
+## Go: Ginkgo + Gomega 生成
+
+```go
+// tests/acceptance/create_workflow_test.go
+// Auto-generated from acceptance.yaml
+// Framework: Ginkgo v2 + Gomega
+
+package acceptance_test
+
+import (
+    "context"
+    "testing"
+
+    . "github.com/onsi/ginkgo/v2"
+    . "github.com/onsi/gomega"
+
+    "myapp/application/usecase"
+    "myapp/domain"
+    "myapp/tests/fixtures"
+    "myapp/tests/mocks"
+)
+
+func TestCreateWorkflow(t *testing.T) {
+    RegisterFailHandler(Fail)
+    RunSpecs(t, "Create Workflow Suite")
+}
+
+var _ = Describe("Feature: Create Workflow", func() {
+    var (
+        repo     *mocks.InMemoryWorkflowRepository
+        eventPub *mocks.MockEventPublisher
+        authSvc  *mocks.MockAuthorizationService
+        uc       *usecase.CreateWorkflowUseCase
+    )
+
+    BeforeEach(func() {
+        repo = mocks.NewInMemoryWorkflowRepository()
+        eventPub = mocks.NewMockEventPublisher()
+        authSvc = mocks.NewMockAuthorizationService()
+        uc = usecase.NewCreateWorkflowUseCase(repo, eventPub, authSvc)
+    })
+
+    // ===== AC1: Create a valid workflow successfully =====
+    // Trace: CBF-REQ-1
+    // Frame Concerns: WF-FC-AUTH, FC2
+    Describe("Scenario: Create a valid workflow successfully", Label("smoke", "api", "AC1"), func() {
+        var (
+            ctx    context.Context
+            input  usecase.CreateWorkflowInput
+            result *usecase.CreateWorkflowOutput
+            err    error
+        )
+
+        BeforeEach(func() {
+            ctx = context.Background()
+        })
+
+        When("a user is authorized and requests to create a workflow", func() {
+            BeforeEach(func() {
+                // Given
+                user := fixtures.AuthenticatedUser()
+                authSvc.AllowCapability(user.ID, "create_workflow", "board-001")
+
+                // When
+                input = usecase.CreateWorkflowInput{
+                    BoardID:    "board-001",
+                    Name:       "First workflow",
+                    OperatorID: user.ID,
+                }
+                result, err = uc.Execute(ctx, input)
+            })
+
+            It("should succeed", func() {
+                Expect(err).NotTo(HaveOccurred())
+            })
+
+            It("should create a workflow with the correct boardId", func() {
+                Expect(result.WorkflowID).NotTo(BeEmpty())
+                
+                workflow, err := repo.FindByID(ctx, result.WorkflowID)
+                Expect(err).NotTo(HaveOccurred())
+                Expect(workflow.BoardID).To(Equal("board-001"))
+            })
+
+            It("should have the correct name", func() {
+                workflow, _ := repo.FindByID(ctx, result.WorkflowID)
+                Expect(workflow.Name).To(Equal("First workflow"))
+            })
+
+            It("should be active (not deleted)", func() {
+                workflow, _ := repo.FindByID(ctx, result.WorkflowID)
+                Expect(workflow.IsDeleted).To(BeFalse())
+            })
+
+            It("should start with empty structure", func() {
+                workflow, _ := repo.FindByID(ctx, result.WorkflowID)
+                Expect(workflow.Stages).To(BeEmpty())
+                Expect(workflow.Lanes).To(BeEmpty())
+            })
+
+            It("should publish WorkflowCreated event", func() {
+                Eventually(func() int {
+                    return eventPub.EventCount()
+                }).Should(Equal(1))
+
+                event := eventPub.LastEvent()
+                Expect(event).To(BeAssignableToTypeOf(&domain.WorkflowCreatedEvent{}))
+            })
+        })
+    })
+
+    // ===== AC2: Reject when not authorized =====
+    // Frame Concerns: WF-FC-AUTH
+    Describe("Scenario: Reject workflow creation when not authorized", Label("security", "AC2"), func() {
+        When("a user is NOT authorized", func() {
+            var err error
+
+            BeforeEach(func() {
+                // Given: user is not authorized
+                authSvc.DenyAll()
+
+                // When
+                input := usecase.CreateWorkflowInput{
+                    BoardID:    "board-001",
+                    Name:       "Test Workflow",
+                    OperatorID: "unauthorized-user",
+                }
+                _, err = uc.Execute(context.Background(), input)
+            })
+
+            It("should return AuthorizationError", func() {
+                Expect(err).To(MatchError(domain.ErrUnauthorized))
+            })
+
+            It("should not create any workflow", func() {
+                count, _ := repo.Count(context.Background())
+                Expect(count).To(Equal(0))
+            })
+
+            It("should not publish any event", func() {
+                Expect(eventPub.EventCount()).To(Equal(0))
+            })
+        })
+    })
+
+    // ===== Table-Driven Tests =====
+    DescribeTable("Scenario: Validation errors",
+        func(boardID, name, expectedError string) {
+            authSvc.AllowAll()
+
+            input := usecase.CreateWorkflowInput{
+                BoardID:    boardID,
+                Name:       name,
+                OperatorID: "user-123",
+            }
+            _, err := uc.Execute(context.Background(), input)
+
+            Expect(err).To(HaveOccurred())
+            Expect(err.Error()).To(ContainSubstring(expectedError))
+        },
+        Entry("empty boardId", "", "Workflow", "boardId is required"),
+        Entry("empty name", "board-001", "", "name is required"),
+        Entry("name too long", "board-001", string(make([]byte, 256)), "name exceeds max length"),
+    )
+})
+```
+
+---
+
+## TypeScript: Cucumber.js 生成
+
+```typescript
+// tests/acceptance/features/create-workflow.feature
+// Auto-generated from acceptance.yaml
+
+Feature: Create Workflow
+  As a board member
+  I want to create a workflow for my board
+  So that I can organize my work
+
+  @smoke @api @AC1
+  Scenario: Create a valid workflow successfully
+    Given a boardId "board-001" is provided
+    And a user "user-123" is authorized to create workflows for that boardId
+    When the user requests to create a workflow with name "First workflow"
+    Then the request should succeed
+    And a Workflow should be created with name "First workflow"
+    And the Workflow should belong to Board "board-001"
+    And the Workflow should be active
+    And a WorkflowCreated event should be published
+
+  @security @AC2  
+  Scenario: Reject workflow creation when not authorized
+    Given a boardId "board-001" is provided
+    And a user "unauthorized-user" is NOT authorized to create workflows
+    When the user attempts to create a workflow
+    Then the request should fail with "AuthorizationError"
+    And no Workflow should be created
+```
+
+```typescript
+// tests/acceptance/steps/create-workflow.steps.ts
+// Auto-generated step definitions for Cucumber.js
+
+import { Given, When, Then, Before, After } from '@cucumber/cucumber';
+import { expect } from 'chai';
+import { CreateWorkflowUseCase } from '@/application/use-cases/CreateWorkflowUseCase';
+import { InMemoryWorkflowRepository } from '@/infrastructure/repositories/InMemoryWorkflowRepository';
+import { MockEventPublisher } from '@/tests/mocks/MockEventPublisher';
+import { MockAuthorizationService } from '@/tests/mocks/MockAuthorizationService';
+
+interface World {
+  repository: InMemoryWorkflowRepository;
+  eventPublisher: MockEventPublisher;
+  authService: MockAuthorizationService;
+  useCase: CreateWorkflowUseCase;
+  input: { boardId: string; name: string; operatorId: string };
+  result: { workflowId: string } | null;
+  error: Error | null;
+}
+
+Before(function (this: World) {
+  this.repository = new InMemoryWorkflowRepository();
+  this.eventPublisher = new MockEventPublisher();
+  this.authService = new MockAuthorizationService();
+  this.useCase = new CreateWorkflowUseCase(
+    this.repository,
+    this.eventPublisher,
+    this.authService
+  );
+  this.result = null;
+  this.error = null;
+});
+
+// ===== Given Steps =====
+
+Given('a boardId {string} is provided', function (this: World, boardId: string) {
+  this.input = { ...this.input, boardId };
+});
+
+Given(
+  'a user {string} is authorized to create workflows for that boardId',
+  function (this: World, userId: string) {
+    this.input = { ...this.input, operatorId: userId };
+    this.authService.allowCapability(userId, 'create_workflow', this.input.boardId);
+  }
+);
+
+Given(
+  'a user {string} is NOT authorized to create workflows',
+  function (this: World, userId: string) {
+    this.input = { ...this.input, operatorId: userId };
+    this.authService.denyAll();
+  }
+);
+
+// ===== When Steps =====
+
+When(
+  'the user requests to create a workflow with name {string}',
+  async function (this: World, name: string) {
+    this.input = { ...this.input, name };
+    try {
+      this.result = await this.useCase.execute(this.input);
+    } catch (e) {
+      this.error = e as Error;
+    }
+  }
+);
+
+When('the user attempts to create a workflow', async function (this: World) {
+  this.input = { ...this.input, name: 'Test Workflow' };
+  try {
+    this.result = await this.useCase.execute(this.input);
+  } catch (e) {
+    this.error = e as Error;
+  }
+});
+
+// ===== Then Steps =====
+
+Then('the request should succeed', function (this: World) {
+  expect(this.error).to.be.null;
+  expect(this.result).to.not.be.null;
+});
+
+Then('the request should fail with {string}', function (this: World, errorType: string) {
+  expect(this.error).to.not.be.null;
+  expect(this.error!.name).to.equal(errorType);
+});
+
+Then(
+  'a Workflow should be created with name {string}',
+  async function (this: World, name: string) {
+    const workflow = await this.repository.findById(this.result!.workflowId);
+    expect(workflow).to.not.be.null;
+    expect(workflow!.name).to.equal(name);
+  }
+);
+
+Then(
+  'the Workflow should belong to Board {string}',
+  async function (this: World, boardId: string) {
+    const workflow = await this.repository.findById(this.result!.workflowId);
+    expect(workflow!.boardId).to.equal(boardId);
+  }
+);
+
+Then('the Workflow should be active', async function (this: World) {
+  const workflow = await this.repository.findById(this.result!.workflowId);
+  expect(workflow!.isDeleted).to.be.false;
+});
+
+Then('a WorkflowCreated event should be published', function (this: World) {
+  expect(this.eventPublisher.events).to.have.lengthOf(1);
+  expect(this.eventPublisher.events[0].type).to.equal('WorkflowCreated');
+});
+
+Then('no Workflow should be created', async function (this: World) {
+  const count = await this.repository.count();
+  expect(count).to.equal(0);
+});
+```
+
+### TypeScript: Jest-Cucumber 替代方案
+
+```typescript
+// tests/acceptance/create-workflow.spec.ts
+// Using jest-cucumber for tighter Jest integration
+
+import { defineFeature, loadFeature } from 'jest-cucumber';
+import { CreateWorkflowUseCase } from '@/application/use-cases/CreateWorkflowUseCase';
+import { InMemoryWorkflowRepository } from '@/infrastructure/repositories/InMemoryWorkflowRepository';
+import { MockEventPublisher } from '@/tests/mocks/MockEventPublisher';
+import { MockAuthorizationService } from '@/tests/mocks/MockAuthorizationService';
+
+const feature = loadFeature('./features/create-workflow.feature');
+
+defineFeature(feature, (test) => {
+  let repository: InMemoryWorkflowRepository;
+  let eventPublisher: MockEventPublisher;
+  let authService: MockAuthorizationService;
+  let useCase: CreateWorkflowUseCase;
+  let input: { boardId: string; name: string; operatorId: string };
+  let result: { workflowId: string } | null;
+  let error: Error | null;
+
+  beforeEach(() => {
+    repository = new InMemoryWorkflowRepository();
+    eventPublisher = new MockEventPublisher();
+    authService = new MockAuthorizationService();
+    useCase = new CreateWorkflowUseCase(repository, eventPublisher, authService);
+    result = null;
+    error = null;
+  });
+
+  test('Create a valid workflow successfully', ({ given, and, when, then }) => {
+    given(/^a boardId "(.*)" is provided$/, (boardId: string) => {
+      input = { ...input, boardId };
+    });
+
+    and(/^a user "(.*)" is authorized to create workflows for that boardId$/, (userId: string) => {
+      input = { ...input, operatorId: userId };
+      authService.allowCapability(userId, 'create_workflow', input.boardId);
+    });
+
+    when(/^the user requests to create a workflow with name "(.*)"$/, async (name: string) => {
+      input = { ...input, name };
+      try {
+        result = await useCase.execute(input);
+      } catch (e) {
+        error = e as Error;
+      }
+    });
+
+    then('the request should succeed', () => {
+      expect(error).toBeNull();
+      expect(result).not.toBeNull();
+    });
+
+    and(/^a Workflow should be created with name "(.*)"$/, async (name: string) => {
+      const workflow = await repository.findById(result!.workflowId);
+      expect(workflow?.name).toBe(name);
+    });
+
+    and('a WorkflowCreated event should be published', () => {
+      expect(eventPublisher.events).toHaveLength(1);
+      expect(eventPublisher.events[0].type).toBe('WorkflowCreated');
+    });
+  });
+});
+```
+
+---
+
+## Rust: cucumber-rs 生成
+
+```rust
+// tests/acceptance/create_workflow.rs
+// Auto-generated from acceptance.yaml
+// Framework: cucumber-rs
+
+use cucumber::{given, when, then, World};
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use myapp::application::use_cases::{CreateWorkflowUseCase, CreateWorkflowInput, CreateWorkflowOutput};
+use myapp::domain::{WorkflowRepository, EventPublisher, AuthorizationService};
+use myapp::domain::errors::DomainError;
+use myapp::infrastructure::repositories::InMemoryWorkflowRepository;
+use myapp::tests::mocks::{MockEventPublisher, MockAuthorizationService};
+
+// ===== World Definition =====
+
+#[derive(Debug, World)]
+#[world(init = Self::new)]
+pub struct CreateWorkflowWorld {
+    repository: Arc<Mutex<InMemoryWorkflowRepository>>,
+    event_publisher: Arc<Mutex<MockEventPublisher>>,
+    auth_service: Arc<Mutex<MockAuthorizationService>>,
+    input: Option<CreateWorkflowInput>,
+    result: Option<Result<CreateWorkflowOutput, DomainError>>,
+}
+
+impl CreateWorkflowWorld {
+    fn new() -> Self {
+        Self {
+            repository: Arc::new(Mutex::new(InMemoryWorkflowRepository::new())),
+            event_publisher: Arc::new(Mutex::new(MockEventPublisher::new())),
+            auth_service: Arc::new(Mutex::new(MockAuthorizationService::new())),
+            input: None,
+            result: None,
+        }
+    }
+}
+
+// ===== AC1: Create a valid workflow successfully =====
+// Trace: CBF-REQ-1
+// Frame Concerns: WF-FC-AUTH, FC2
+
+#[given(expr = "a boardId {string} is provided")]
+async fn given_board_id(world: &mut CreateWorkflowWorld, board_id: String) {
+    world.input = Some(CreateWorkflowInput {
+        board_id,
+        name: String::new(),
+        operator_id: String::new(),
+    });
+}
+
+#[given(expr = "a user {string} is authorized to create workflows for that boardId")]
+async fn given_user_authorized(world: &mut CreateWorkflowWorld, user_id: String) {
+    let mut input = world.input.take().unwrap();
+    input.operator_id = user_id.clone();
+    world.input = Some(input);
+
+    let mut auth = world.auth_service.lock().await;
+    auth.allow_capability(&user_id, "create_workflow", &world.input.as_ref().unwrap().board_id);
+}
+
+#[given(expr = "a user {string} is NOT authorized to create workflows")]
+async fn given_user_not_authorized(world: &mut CreateWorkflowWorld, user_id: String) {
+    let mut input = world.input.take().unwrap();
+    input.operator_id = user_id;
+    world.input = Some(input);
+
+    let mut auth = world.auth_service.lock().await;
+    auth.deny_all();
+}
+
+#[when(expr = "the user requests to create a workflow with name {string}")]
+async fn when_create_workflow(world: &mut CreateWorkflowWorld, name: String) {
+    let mut input = world.input.take().unwrap();
+    input.name = name;
+    world.input = Some(input.clone());
+
+    let use_case = CreateWorkflowUseCase::new(
+        world.repository.clone(),
+        world.event_publisher.clone(),
+        world.auth_service.clone(),
+    );
+
+    world.result = Some(use_case.execute(input).await);
+}
+
+#[when("the user attempts to create a workflow")]
+async fn when_attempt_create(world: &mut CreateWorkflowWorld) {
+    let mut input = world.input.take().unwrap();
+    input.name = "Test Workflow".to_string();
+    world.input = Some(input.clone());
+
+    let use_case = CreateWorkflowUseCase::new(
+        world.repository.clone(),
+        world.event_publisher.clone(),
+        world.auth_service.clone(),
+    );
+
+    world.result = Some(use_case.execute(input).await);
+}
+
+#[then("the request should succeed")]
+async fn then_success(world: &mut CreateWorkflowWorld) {
+    assert!(world.result.as_ref().unwrap().is_ok(), "Expected success but got error");
+}
+
+#[then(expr = "the request should fail with {string}")]
+async fn then_fail_with(world: &mut CreateWorkflowWorld, error_type: String) {
+    let result = world.result.as_ref().unwrap();
+    assert!(result.is_err(), "Expected error but got success");
+    
+    let err = result.as_ref().unwrap_err();
+    match error_type.as_str() {
+        "AuthorizationError" => assert!(matches!(err, DomainError::Unauthorized(_))),
+        "ValidationError" => assert!(matches!(err, DomainError::Validation(_))),
+        _ => panic!("Unknown error type: {}", error_type),
+    }
+}
+
+#[then(expr = "a Workflow should be created with name {string}")]
+async fn then_workflow_created(world: &mut CreateWorkflowWorld, name: String) {
+    let result = world.result.as_ref().unwrap().as_ref().unwrap();
+    let repo = world.repository.lock().await;
+    let workflow = repo.find_by_id(&result.workflow_id).await.unwrap().unwrap();
+    
+    assert_eq!(workflow.name, name);
+}
+
+#[then(expr = "the Workflow should belong to Board {string}")]
+async fn then_workflow_belongs_to_board(world: &mut CreateWorkflowWorld, board_id: String) {
+    let result = world.result.as_ref().unwrap().as_ref().unwrap();
+    let repo = world.repository.lock().await;
+    let workflow = repo.find_by_id(&result.workflow_id).await.unwrap().unwrap();
+    
+    assert_eq!(workflow.board_id, board_id);
+}
+
+#[then("the Workflow should be active")]
+async fn then_workflow_active(world: &mut CreateWorkflowWorld) {
+    let result = world.result.as_ref().unwrap().as_ref().unwrap();
+    let repo = world.repository.lock().await;
+    let workflow = repo.find_by_id(&result.workflow_id).await.unwrap().unwrap();
+    
+    assert!(!workflow.is_deleted);
+}
+
+#[then("a WorkflowCreated event should be published")]
+async fn then_event_published(world: &mut CreateWorkflowWorld) {
+    let publisher = world.event_publisher.lock().await;
+    assert_eq!(publisher.event_count(), 1);
+    assert!(publisher.has_event_type("WorkflowCreated"));
+}
+
+#[then("no Workflow should be created")]
+async fn then_no_workflow(world: &mut CreateWorkflowWorld) {
+    let repo = world.repository.lock().await;
+    assert_eq!(repo.count().await, 0);
+}
+
+// ===== Test Runner =====
+
+#[tokio::main]
+async fn main() {
+    CreateWorkflowWorld::run("tests/features/create-workflow.feature").await;
+}
+```
+
+### Rust: Cargo.toml 依賴
+
+```toml
+[dev-dependencies]
+cucumber = { version = "0.20", features = ["macros"] }
+async-trait = "0.1"
+tokio = { version = "1", features = ["full", "test-util"] }
+```
+
+---
+
+## 框架選擇指南
+
+| 考量 | Java | Go | TypeScript | Rust |
+|------|------|-----|------------|------|
+| **推薦框架** | ezSpec | Ginkgo | Cucumber.js | cucumber-rs |
+| **備選** | Cucumber-JVM | godog | jest-cucumber | - |
+| **Step Definition** | 自動 (ezSpec) | 內建 | 手寫 | 宏輔助 |
+| **非同步支援** | ✅ | ✅ | ✅ | ✅ (async/await) |
+| **表格測試** | Examples | DescribeTable | Scenario Outline | Examples |
+| **IDE 支援** | IntelliJ | GoLand | VS Code | rust-analyzer |
+
+---
+
 ## 與其他 Skills 的協作
 
 ```
 analyze-frame
     │
-    └── 生成 acceptance/acceptance.yaml
+    └── 生成 acceptance.yaml
             │
             └── generate-acceptance-test (本 Skill)
                     │
-                    ├── 生成 .feature (ezSpec)
-                    ├── 生成 TypeScript/Go 測試骨架
+                    ├── 生成 .feature (Gherkin)
+                    ├── 生成 Java ezSpec (Fluent API)
+                    ├── 生成 Go Ginkgo tests
+                    ├── 生成 TypeScript Cucumber steps
+                    ├── 生成 Rust cucumber-rs tests
                     │
                     ├── 連結 → enforce-contract (驗證 contracts)
                     └── 連結 → cross-context (驗證 ACL)
