@@ -1,0 +1,8 @@
+{
+  "name": "skills",
+  "version": "1.0.0",
+  "description": "Problem Frames methodology skills for reducing AI hallucinations through hierarchical constraints and specification-driven development.",
+  "author": {
+    "name": "knowlet"
+  }
+}

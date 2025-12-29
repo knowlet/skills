@@ -16,23 +16,70 @@
 
 ---
 
+## Plugins vs. Skills：該選哪一個？
+
+本專案目前採用 **Hybrid 架構**，同時支援「Claude Plugin」與「Direct Skills」兩種調用方式。以下是我們對這兩種方式的比較與推薦：
+
+| 特性 | Claude Plugin (推薦) | Direct Skills (Legacy) |
+|------|---------------------|------------------------|
+| **調用方式** | **Slash Commands** (`/analyze`) 或 `@AgentName` | **自然語言** ("幫我分析...") |
+| **觸發精準度** | **高** (明確指令，絕不誤判) | **中** (依賴語意匹配，可能不穩定) |
+| **安裝難度** | **低** (單一指令加載目錄) | **高** (需手動複製多個檔案) |
+| **多步驟任務** | **強** (可透過 Slash Command 觸發複雜腳本) | **普** (需逐步提示) |
+| **適用場景** | 複雜框架、團隊協作、固定流程 | 個人簡單嘗試、靈活探索 |
+
+### 為什麼推薦使用 Plugin？
+
+對於 **Problem Frames** 這樣嚴謹的軟體工程框架，我們強烈建議使用 **Plugin 模式**，原因如下：
+
+1.  **明確的意圖啟動**：使用 `/analyze` 明確告知 Claude "現在開始進行問題分析"，避免在一般對話中誤觸分析邏輯。
+2.  **封裝複雜度**：Saga Orchestrator 涉及多個 Sub-agent 的協作，透過 `/saga` 指令可以一次性載入所需的 Context 與 Prompt，比手動下 Prompt 更可靠。
+3.  **版本控管**：Plugin 作為一個完整單元，更容易進行版本更新與與團隊同步。
+
+---
+
 ## 快速開始
 
-### 安裝
+### 方式一：作為 Claude Plugin 使用 (推薦)
 
-**Personal Skills（個人使用）**
+不需要複製任何檔案，直接在專案根目錄加載：
+
+```bash
+# 在此目錄下啟動 Claude Code
+claude --plugin-dir .
+```
+
+**開發範例：**
+
+*   **分析新需求**：
+    ```text
+    /analyze 使用者想要一個 "每日庫存報表" 功能，需從 Warehouse Context 讀取資料並發送 Email
+    ```
+
+*   **執行 Saga 流程**：
+    ```text
+    /saga 處理 "使用者下單" 流程，包含庫存扣減(StockContext)與付款處理(PaymentContext)
+    ```
+
+*   **調用特定 Agent**：
+    ```text
+    @command-sub-agent 請根據 aggregate.yaml 實作 createOrder method
+    ```
+
+### 方式二：作為 Personal Skills 使用 (舊版)
+
+將 Skills 複製到全域配置目錄：
+
 ```bash
 cp -r skills/* ~/.claude/skills/
 ```
 
-**Project Skills（團隊共享）**
-```bash
-mkdir -p .claude/skills
-cp -r /path/to/this/repo/skills/* .claude/skills/
-git add .claude/skills/ && git commit -m "Add Problem Frames skills"
-```
+**開發範例：**
 
-### 驗證
+*   **自然語言觸發**：
+    ```text
+    請幫我分析 "每日庫存報表" 的 Problem Frame 結構
+    ```
 
 啟動 Claude Code 後詢問：
 ```
@@ -297,6 +344,30 @@ skill-name/
 ├── references/       # Optional: 參考文檔
 └── assets/           # Optional: 範本、資源
 ```
+
+---
+
+## 理論驗證 (Theoretical Validation)
+
+本架構經過與 Michael Jackson 的《Problem Frames》理論深度比對，證實其設計高度符合問題框架分析的標準：
+
+### 1. 框架映射 (Frame Mapping)
+
+| Problem Frame | Agent Skill | 說明 |
+| :--- | :--- | :--- |
+| **Required Behavior** | `reactor-sub-agent` (RIF) | 對應系統對領域事件的反應 (Reactive) |
+| **Commanded Behavior** | `command-sub-agent` (CBF) | 對應 Operator 的命令操作 (Command Side) |
+| **Information Display** | `query-sub-agent` (IDF) | 對應資訊的查詢與顯示 (Query Side) |
+
+### 2. 結構映射 (Structural Mapping)
+
+- **Machine Domain**：對應 `machine/` 目錄，封裝 Application Logic。
+- **Controlled Domain**：對應 `controlled-domain/` 目錄，封裝 Aggregate 與 Domain Logic。
+- **Shared Phenomena**：透過明確定義的 API Interface 與 Domain Events 實現 Machine 與 Domain 的互動。
+
+### 3. 關注點實作 (Concerns Implementation)
+
+本設計最關鍵的創新在於明確化的 **Frame Concerns** 機制。透過 `frame.yaml` 中的 `frame_concerns` 與 `satisfied_by` 追溯連結，強制將 "Reliability", "Identity", "Synchronization" 等隱性需求具現化為程式碼約束（Design by Contract）。這有效解決了 GenAI 生成代碼時容易遺漏非功能需求的問題，達成「防止幻覺」的核心目標。
 
 ---
 
