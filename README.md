@@ -141,6 +141,7 @@ docs/specs/{feature-name}/
 | [`coding-standards`](skills/coding-standards/SKILL.md) | 強制執行編碼規範 |
 | [`enforce-contract`](skills/enforce-contract/SKILL.md) | 驗證 pre/post-conditions 與 invariants |
 | [`generate-acceptance-test`](skills/generate-acceptance-test/SKILL.md) | 生成 BDD/ezSpec 測試骨架 |
+| [`mutation-testing`](skills/mutation-testing/SKILL.md) | 進行變異測試 (Mutation Testing)，驗證測試品質 |
 
 ### 多語言支援
 
