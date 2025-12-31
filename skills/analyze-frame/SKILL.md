@@ -311,6 +311,49 @@ aggregate:
 
 ---
 
+## 實作優先順序策略
+
+### 原則
+
+1. **先核心 Aggregate，後支援 Aggregate**
+2. **先 Command，後 Query**（或並行）
+3. **依相依性順序**：被依賴的先做
+4. **完整生命週期**：一個 Aggregate 完成 CRUD 後再換下一個
+
+### 優先順序規劃範例
+
+當有多個 Aggregate 和 Use Case 時，建議按以下方式排序：
+
+```
+Phase 1: 核心 Aggregate 建立 (Create)
+├── create-product.json      ✅ 已完成
+├── create-pbi.json          ✅ 已完成
+└── create-sprint.json       ✅ 已完成
+
+Phase 2: 完成第一個 Aggregate 生命週期
+├── start-sprint             → Command | Medium
+├── complete-sprint          → Command | Medium
+├── cancel-sprint            → Command | Low
+├── get-sprint               → Query   | Low
+├── get-sprints-by-product   → Query   | Low
+└── delete-sprint            → Command | Medium
+
+Phase 3: 擴展其他 Aggregate
+├── Product Aggregate (6 use cases)
+├── PBI Aggregate (15 use cases) - 最大 backlog
+└── Scrum Team Aggregate (5 use cases) - 新 aggregate
+```
+
+### 複雜度評估
+
+| 複雜度 | 標準 | 估計時間 |
+|--------|------|----------|
+| Low | 單一 Aggregate，無跨 BC | 1-2 小時 |
+| Medium | 有驗證邏輯或狀態轉換 | 2-4 小時 |
+| High | 跨多個 Aggregate 或 BC | 4-8 小時 |
+
+---
+
 ## 品質檢查清單
 
 - [ ] Frame 類別判斷是否正確？

@@ -23,6 +23,7 @@ description: 代碼實作階段觸發。強制執行統一的編碼規範，支�
 | 語言 | 參考文件 | 說明 |
 |-----|---------|------|
 | Java | 本文件 | Spring Boot / Jakarta EE |
+| Java | [references/JAVA_CLEAN_ARCH.md](references/JAVA_CLEAN_ARCH.md) | Clean Architecture 詳細結構 |
 | TypeScript | [references/TYPESCRIPT.md](references/TYPESCRIPT.md) | Node.js / Deno / Bun |
 | Go | [references/GOLANG.md](references/GOLANG.md) | Standard Go Project Layout |
 | Rust | [references/RUST.md](references/RUST.md) | Cargo / Tokio async runtime |

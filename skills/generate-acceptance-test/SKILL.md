@@ -21,6 +21,70 @@ description: 從規格目錄的 acceptance.yaml 生成/維護 BDD/ezSpec 測試�
 
 ---
 
+## 工具腳本 (scripts/)
+
+### generate_tests.py - 測試生成器
+
+從 acceptance.yaml 生成各語言的 BDD 測試骨架。支援新格式 (`acceptance_criteria`) 和舊格式 (`scenarios`)。
+
+**使用方式：**
+
+```bash
+# 生成 Gherkin .feature 檔案
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/create-workflow/ --lang gherkin
+
+# 生成 TypeScript Cucumber.js step definitions
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/create-workflow/ --lang typescript --output tests/acceptance/
+
+# 生成 Go Ginkgo 測試
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/create-workflow/ --lang go --output tests/acceptance/
+
+# 生成 Rust cucumber-rs 測試
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/create-workflow/ --lang rust --output tests/acceptance/
+```
+
+**支援語言：**
+
+| Language | Flag | Output |
+|----------|------|--------|
+| Gherkin | `--lang gherkin` | `{feature}.feature` |
+| TypeScript | `--lang typescript` | `{feature}.steps.ts` |
+| Go | `--lang go` | `{feature}_test.go` |
+| Rust | `--lang rust` | `{feature}.rs` |
+
+**格式相容性：**
+
+腳本自動偵測並支援兩種格式：
+
+```yaml
+# 新格式 (推薦)
+acceptance_criteria:
+  - id: AC1
+    trace:
+      requirement: [CBF-REQ-1]
+      frame_concerns: [FC1]
+    given: ["..."]
+    when: ["..."]
+    then: ["..."]
+
+# 舊格式 (向下相容)
+acceptance:
+  scenarios:
+    - id: AT1
+      given:
+        - condition: "..."
+      when:
+        - action: "..."
+      then:
+        - expectation: "..."
+```
+
+---
+
 ## 關鍵概念
 
 ### Executable Specification

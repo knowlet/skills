@@ -105,6 +105,22 @@ Use the validator script to check spec completeness:
 python ~/.claude/skills/analyze-frame/scripts/validate_spec.py docs/specs/{feature-name}/
 ```
 
+### Test Generator
+
+Use the test generator to create BDD test skeletons:
+
+```bash
+# Generate Gherkin .feature file
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/{feature-name}/ --lang gherkin
+
+# Generate language-specific tests
+python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
+    docs/specs/{feature-name}/ --lang typescript --output tests/acceptance/
+```
+
+Supported languages: `gherkin`, `typescript`, `go`, `rust`
+
 ### Templates
 
 The `analyze-frame` skill provides YAML templates:
