@@ -32,9 +32,17 @@ This project contains Agent Skills based on **Problem Frames** methodology for r
 | Skill | Purpose |
 |-------|---------|
 | `arch-guard` | Enforce Clean Architecture + DDD + CQRS |
-| `coding-standards` | Enforce coding conventions (Java/TypeScript/Go) |
+| `coding-standards` | Enforce coding conventions (Java/TypeScript/Go/Rust) |
 | `enforce-contract` | Validate pre/post-conditions & invariants |
 | `generate-acceptance-test` | Generate BDD/ezSpec test skeleton |
+
+### Review & Validation
+
+| Skill | Purpose |
+|-------|---------|
+| `code-reviewer` | Automated code review (architecture, standards, spec compliance) |
+| `spec-compliance-validator` | Validate spec completeness & format compliance |
+| `multi-model-reviewer` | Multi-AI verification (Spec == Program == Test) |
 
 ## Spec Directory Structure
 
@@ -120,6 +128,34 @@ python ~/.claude/skills/generate-acceptance-test/scripts/generate_tests.py \
 ```
 
 Supported languages: `gherkin`, `typescript`, `go`, `rust`
+
+### Multi-Model Review
+
+Use multi-model review for comprehensive verification:
+
+```bash
+# Full review (Spec == Program == Test)
+python ~/.claude/skills/multi-model-reviewer/scripts/multi_model_review.py \
+    --spec-dir docs/specs/{feature-name}/ \
+    --program-dir src/{aggregate}/ \
+    --test-dir tests/{aggregate}/ \
+    --output review-report.yaml
+
+# Use specific models
+python ~/.claude/skills/multi-model-reviewer/scripts/multi_model_review.py \
+    --spec-dir docs/specs/{feature-name}/ \
+    --program-dir src/ --test-dir tests/ \
+    --models chatgpt,claude,gemini
+```
+
+**Supported Models:**
+| Model | Method | Role |
+|-------|--------|------|
+| ChatGPT 5.2 | OpenAI API | Semantic analysis |
+| Gemini | Local CLI | Multi-modal review |
+| Codex | Local CLI | Code understanding |
+| QWEN 32B | Ollama | Fast local inference |
+| Claude | Local CLI | Final arbiter (false positive filter) |
 
 ### Templates
 

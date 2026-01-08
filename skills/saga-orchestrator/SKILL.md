@@ -1,4 +1,3 @@
-```markdown
 ---
 name: saga-orchestrator
 description: 處理跨 Frame 的複雜業務流程，協調多個 Sub-agent (command/query/reactor) 完成 Saga/Choreography 模式的分散式交易。當需求涉及多個狀態變更、事件反應與查詢的組合時使用。
@@ -354,4 +353,3 @@ choreography:
 - ❌ 未考慮併發執行的競爭條件
 - ❌ 過度使用 Saga 造成系統複雜度過高（簡單場景用單一 Transaction 即可）
 
-```
